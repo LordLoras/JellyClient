@@ -37,7 +37,6 @@ selection, and first-class SyncPlay without a browser or cast handoff.
 - Windows 11 x64.
 - A current Jellyfin server.
 - A recent 64-bit MPV build (MPV 0.38 or newer).
-- Windows HDR enabled when using HDR10 output on an HDR-capable display.
 
 MPV is not redistributed in this repository yet. Install a trusted current
 Windows build, then select `mpv.exe` under **Settings → MPV + HDR output**.
@@ -91,6 +90,3 @@ Longer-term goals include a native VIDAA client for platform-native Dolby
 Vision playback, optional HDMI audio bitstream passthrough, bundled-player
 distribution, and broader Jellyfin features such as Quick Connect, multiple
 saved servers, Live TV, downloads, and music.
-
-The detailed design and later VIDAA boundary are in
-[the project plan](docs/PROJECT_PLAN.md).
