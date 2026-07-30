@@ -17,6 +17,7 @@
     "test:watch": "vitest",
     "package:win": "pnpm build && electron-builder --win nsis",
     "vidaa:probe": "vite --config VIDAA/vite.config.ts --host 0.0.0.0 --port 4173",
+    "vidaa:probe:tv": "pnpm vidaa:build && vite preview --config VIDAA/vite.config.ts --host 0.0.0.0 --port 80 --strictPort",
     "vidaa:build": "tsc --noEmit -p VIDAA/tsconfig.json && vite build --config VIDAA/vite.config.ts",
     "vidaa:preview": "vite preview --config VIDAA/vite.config.ts --host 0.0.0.0 --port 4173",
     "preview": "electron-vite preview"

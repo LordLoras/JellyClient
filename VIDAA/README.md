@@ -24,6 +24,17 @@ http://localhost:4173/setup
 Add PC-local media paths or direct HTTP media URLs and save. The setup page
 shows the LAN address to open in the VIDAA browser.
 
+If the TV browser does not connect to a nonstandard port, use ordinary HTTP
+port 80:
+
+```powershell
+pnpm vidaa:probe:tv
+```
+
+Then open `http://<PC-LAN-IP>/` on the television. The server also accepts a
+matching `sslip.io` hostname alias when the TV handles hostnames more reliably
+than raw IP addresses.
+
 ## Recommended test reel
 
 1. SDR H.264 or HEVC in MP4.
@@ -40,6 +51,9 @@ or authenticated Jellyfin stream URLs.
 
 The setup page writes `probe-media.local.json` in this folder. It is excluded
 from Git and contains any configured PC paths or URLs.
+
+Short remuxed controls can be stored in `test-media.local`. That directory is
+also excluded from Git.
 
 Configuration changes are accepted only from the PC loopback interface.
 LAN devices can read the redacted source list and stream only the explicitly

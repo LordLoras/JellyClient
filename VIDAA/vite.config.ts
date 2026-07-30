@@ -78,6 +78,27 @@ function isPrivateLanAddress(address: string): boolean {
     (octets[0] === 192 && octets[1] === 168);
 }
 
+function lanAddresses(): string[] {
+  const networkAddresses = Object.values(networkInterfaces())
+    .flat()
+    .filter((entry) =>
+      entry?.family === 'IPv4' &&
+      !entry.internal &&
+      !entry.address.startsWith('169.254.')
+    )
+    .map((entry) => entry!.address);
+  const privateAddresses = networkAddresses.filter(isPrivateLanAddress);
+
+  return [...new Set(
+    privateAddresses.length > 0 ? privateAddresses : networkAddresses
+  )];
+}
+
+function lanHostnameAliases(): string[] {
+  return lanAddresses()
+    .map((address) => `${address.split('.').join('-')}.sslip.io`);
+}
+
 function json(
   response: ServerResponse,
   status: number,
@@ -107,20 +128,8 @@ function text(
 function lanUrls(request: IncomingMessage): string[] {
   const host = request.headers.host ?? 'localhost:4173';
   const port = host.includes(':') ? host.slice(host.lastIndexOf(':') + 1) : '4173';
-  const networkAddresses = Object.values(networkInterfaces())
-    .flat()
-    .filter((entry) =>
-      entry?.family === 'IPv4' &&
-      !entry.internal &&
-      !entry.address.startsWith('169.254.')
-    )
-    .map((entry) => entry!.address);
-  const privateAddresses = networkAddresses.filter(isPrivateLanAddress);
-  const addresses = privateAddresses.length > 0
-    ? privateAddresses
-    : networkAddresses;
 
-  return [...new Set(addresses)]
+  return lanAddresses()
     .map((address) => `http://${address}:${port}/`);
 }
 
@@ -518,11 +527,13 @@ export default defineConfig({
     probeServerPlugin()
   ],
   server: {
+    allowedHosts: lanHostnameAliases(),
     host: '0.0.0.0',
     port: 4173,
     strictPort: true
   },
   preview: {
+    allowedHosts: lanHostnameAliases(),
     host: '0.0.0.0',
     port: 4173,
     strictPort: true
