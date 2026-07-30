@@ -1,0 +1,9 @@
+packages:
+  - .
+allowBuilds:
+  electron: true
+  electron-winstaller: true
+  esbuild: true
+minimumReleaseAgeExclude:
+  - lucide-react@1.28.0
+  - axios@1.19.0

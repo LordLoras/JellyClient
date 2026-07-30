@@ -1,0 +1,14 @@
+node_modules/
+out/
+dist/
+release/
+coverage/
+artifacts/
+test-results/
+.vite/
+*.log
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+jellyclient.config.local.json

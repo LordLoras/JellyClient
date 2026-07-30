@@ -1,0 +1,880 @@
+import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { access } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { createConnection, type Socket } from 'node:net';
+import { app } from 'electron';
+import type {
+  AppSettings,
+  MediaItem,
+  MpvCapability,
+  PlaybackDiagnostics,
+  PlaybackState,
+  TrackInfo
+} from '@shared/contracts.js';
+import { initialPlaybackState } from '@shared/defaults.js';
+import {
+  choosePreferredSubtitle,
+  mpvLanguagePriority
+} from '@shared/subtitle-selection.js';
+import { ConfigService } from './config-service.js';
+import { ClientEventBus } from './event-bus.js';
+import { userFacingError } from './errors.js';
+
+interface MpvMessage {
+  request_id?: number;
+  error?: string;
+  data?: unknown;
+  event?: string;
+  name?: string;
+  reason?: string;
+}
+
+interface PendingCommand {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+}
+
+export interface MpvLoadRequest {
+  url: string;
+  authorizationHeader: string;
+  title: string;
+  startSeconds: number;
+  fullscreen: boolean;
+  paused: boolean;
+  externalSubtitle: {
+    url: string;
+    title: string;
+    language: string;
+  } | null;
+}
+
+export interface MpvSubtitlePreference {
+  enabled: boolean;
+  language: string;
+  streamIndex: number | null;
+}
+
+const OBSERVED_PROPERTIES = [
+  'time-pos',
+  'duration',
+  'pause',
+  'paused-for-cache',
+  'volume',
+  'mute',
+  'fullscreen',
+  'track-list',
+  'video-params',
+  'video-target-params',
+  'audio-out-params',
+  'estimated-display-fps',
+  'display-names',
+  'current-vo',
+  'target-colorspace-hint',
+  'target-colorspace-hint-mode',
+  'tone-mapping',
+  'hwdec-current',
+  'cache-duration',
+  'vo-drop-frame-count'
+] as const;
+
+export class MpvService extends EventEmitter {
+  private readonly config: ConfigService;
+  private readonly events: ClientEventBus;
+  private processValue: ChildProcess | null = null;
+  private socket: Socket | null = null;
+  private pipeName = '';
+  private readBuffer = '';
+  private nextRequestId = 1;
+  private pending = new Map<number, PendingCommand>();
+  private stateValue: PlaybackState = structuredClone(initialPlaybackState);
+  private capabilityValue: MpvCapability = {
+    available: false,
+    executablePath: null,
+    version: null,
+    error: 'MPV has not been probed yet.'
+  };
+  private intentionalShutdown = false;
+  private pendingSubtitlePreference: MpvSubtitlePreference | null = null;
+
+  constructor(config: ConfigService, events: ClientEventBus) {
+    super();
+    this.config = config;
+    this.events = events;
+  }
+
+  get state(): PlaybackState {
+    return structuredClone(this.stateValue);
+  }
+
+  get capability(): MpvCapability {
+    return structuredClone(this.capabilityValue);
+  }
+
+  get isConnected(): boolean {
+    return Boolean(this.socket && !this.socket.destroyed);
+  }
+
+  setMediaMetadata(
+    item: MediaItem,
+    diagnostics: Partial<PlaybackDiagnostics>,
+    subtitlePreference: MpvSubtitlePreference
+  ): PlaybackState {
+    this.pendingSubtitlePreference = subtitlePreference;
+    const player = this.config.settings.player;
+    this.setState({
+      ...this.stateValue,
+      item,
+      tracks: [],
+      diagnostics: {
+        ...this.stateValue.diagnostics,
+        outputPrimaries: null,
+        outputTransfer: null,
+        outputMatrix: null,
+        outputLevels: null,
+        outputPixelFormat: null,
+        outputMinLuminance: null,
+        outputMaxLuminance: null,
+        displayNames: [],
+        displayFps: 0,
+        hwdec: null,
+        audioOutputFormat: null,
+        audioOutputChannels: null,
+        audioOutputSampleRate: null,
+        cacheDurationSeconds: 0,
+        droppedFrames: 0,
+        ...diagnostics,
+        hdrMode: player.hdrMode,
+        gpuApi: player.gpuApi,
+        gpuContext: player.gpuApi === 'vulkan' ? 'winvk' : 'd3d11',
+        targetPolicy:
+          player.hdrMode === 'tone-map'
+            ? 'Forced BT.709 / gamma 2.2 SDR target'
+            : player.hdrMode === 'passthrough'
+              ? 'Source-metadata colorspace hint'
+              : 'Automatic display target'
+      }
+    });
+    return this.state;
+  }
+
+  async probe(overridePath?: string): Promise<MpvCapability> {
+    const candidates = await this.candidatePaths(overridePath);
+    for (const path of candidates) {
+      try {
+        await access(path);
+        const version = await this.readVersion(path);
+        this.capabilityValue = {
+          available: true,
+          executablePath: path,
+          version,
+          error: null
+        };
+        this.updateDiagnostics({
+          mpvVersion: version
+        });
+        return this.capability;
+      } catch {
+        // Continue to the next discovered candidate.
+      }
+    }
+
+    this.capabilityValue = {
+      available: false,
+      executablePath: null,
+      version: null,
+      error:
+        'MPV was not found. Select mpv.exe in Settings before starting playback.'
+    };
+    return this.capability;
+  }
+
+  async load(request: MpvLoadRequest): Promise<PlaybackState> {
+    const capability = this.capabilityValue.available
+      ? this.capabilityValue
+      : await this.probe();
+    if (!capability.available || !capability.executablePath) {
+      throw new Error(capability.error ?? 'MPV is unavailable.');
+    }
+
+    const nextGeneration = this.stateValue.generation + 1;
+    this.setState({
+      ...this.stateValue,
+      status: 'starting',
+      generation: nextGeneration,
+      positionSeconds: request.startSeconds,
+      paused: true,
+      buffering: false,
+      error: null
+    });
+
+    await this.ensureRunning(capability.executablePath);
+    await this.command([
+      'set_property',
+      'http-header-fields',
+      [request.authorizationHeader]
+    ]);
+    await this.command(['set_property', 'force-media-title', request.title]);
+    await this.command(['set_property', 'fullscreen', request.fullscreen]);
+    await this.command(['set_property', 'pause', request.paused]);
+    const loadCommand: unknown[] = [
+      'loadfile',
+      request.url,
+      'replace'
+    ];
+    if (request.startSeconds > 0) {
+      loadCommand.push(-1, {
+        start: String(request.startSeconds)
+      });
+    }
+    await this.command(loadCommand);
+    if (request.externalSubtitle) {
+      await this.command([
+        'sub-add',
+        request.externalSubtitle.url,
+        'select',
+        request.externalSubtitle.title,
+        request.externalSubtitle.language
+      ]);
+      this.pendingSubtitlePreference = null;
+    }
+    this.setState({
+      ...this.stateValue,
+      status: 'loading',
+      fullscreen: request.fullscreen
+    });
+    return this.state;
+  }
+
+  async play(): Promise<PlaybackState> {
+    await this.command(['set_property', 'pause', false]);
+    return this.state;
+  }
+
+  async pause(): Promise<PlaybackState> {
+    await this.command(['set_property', 'pause', true]);
+    return this.state;
+  }
+
+  async stop(): Promise<PlaybackState> {
+    if (this.socket) await this.command(['stop']);
+    this.setState({
+      ...this.stateValue,
+      status: 'stopped',
+      paused: true,
+      buffering: false
+    });
+    return this.state;
+  }
+
+  async seek(positionSeconds: number): Promise<PlaybackState> {
+    await this.command(['seek', Math.max(0, positionSeconds), 'absolute+exact']);
+    return this.state;
+  }
+
+  async setVolume(volume: number): Promise<PlaybackState> {
+    await this.command([
+      'set_property',
+      'volume',
+      Math.min(100, Math.max(0, volume))
+    ]);
+    return this.state;
+  }
+
+  async setMuted(muted: boolean): Promise<PlaybackState> {
+    await this.command(['set_property', 'mute', muted]);
+    return this.state;
+  }
+
+  async setFullscreen(fullscreen: boolean): Promise<PlaybackState> {
+    await this.command(['set_property', 'fullscreen', fullscreen]);
+    return this.state;
+  }
+
+  async toggleStats(): Promise<PlaybackState> {
+    await this.command(['script-binding', 'stats/display-stats-toggle']);
+    return this.state;
+  }
+
+  async selectTrack(
+    type: 'audio' | 'subtitle',
+    id: number | null
+  ): Promise<PlaybackState> {
+    if (type === 'subtitle') this.pendingSubtitlePreference = null;
+    const property = type === 'audio' ? 'aid' : 'sid';
+    await this.command(['set_property', property, id ?? 'no']);
+    return this.state;
+  }
+
+  async setSpeed(speed: number): Promise<void> {
+    await this.command(['set_property', 'speed', speed]);
+  }
+
+  async shutdown(): Promise<void> {
+    this.intentionalShutdown = true;
+    try {
+      if (this.socket) await this.command(['quit']);
+    } catch {
+      this.processValue?.kill();
+    }
+    this.closeSocket();
+    this.processValue = null;
+  }
+
+  private async ensureRunning(executablePath: string): Promise<void> {
+    if (this.socket && !this.socket.destroyed) return;
+    this.intentionalShutdown = false;
+    this.pipeName = `\\\\.\\pipe\\jellyclient-${randomUUID()}`;
+    const args = this.buildArguments(this.config.settings);
+    const child = spawn(executablePath, args, {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    this.processValue = child;
+    child.on('error', (error) => {
+      this.fail(`MPV could not start: ${userFacingError(error, 'Unknown error')}`);
+    });
+    child.on('exit', (code) => {
+      this.closeSocket();
+      this.processValue = null;
+      if (!this.intentionalShutdown) {
+        this.fail(`MPV exited unexpectedly${code === null ? '' : ` (code ${code})`}.`);
+        this.events.emitClient({
+          type: 'notice',
+          data: {
+            level: 'error',
+            message: 'The MPV player process exited unexpectedly.'
+          }
+        });
+      }
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      const message = chunk.toString('utf8').trim();
+      if (/fatal|error/i.test(message)) {
+        this.updateDiagnostics({ reason: message.slice(0, 300) });
+      }
+    });
+
+    await this.connectPipe();
+    for (const [index, property] of OBSERVED_PROPERTIES.entries()) {
+      await this.command(['observe_property', index + 1, property]);
+    }
+  }
+
+  private buildArguments(settings: AppSettings): string[] {
+    const args = [
+      '--idle=yes',
+      '--force-window=no',
+      '--keep-open=no',
+      '--input-default-bindings=yes',
+      '--input-vo-keyboard=yes',
+      '--osc=yes',
+      '--vo=gpu-next',
+      `--gpu-api=${settings.player.gpuApi}`,
+      `--hwdec=${settings.player.hardwareDecoding ? 'auto-safe' : 'no'}`,
+      '--audio-client-name=JellyClient',
+      '--sub-auto=no',
+      '--msg-level=all=warn',
+      '--title=JellyClient',
+      `--ontop=${settings.player.alwaysOnTop ? 'yes' : 'no'}`,
+      `--input-ipc-server=${this.pipeName}`
+    ];
+
+    if (settings.player.autoEnableSubtitles) {
+      args.push(
+        '--sid=auto',
+        `--slang=${mpvLanguagePriority(settings.player.preferredSubtitleLanguage)}`,
+        '--subs-match-os-language=no',
+        '--subs-fallback=no',
+        '--subs-fallback-forced=no'
+      );
+    } else {
+      args.push('--sid=no');
+    }
+
+    if (settings.player.gpuApi === 'vulkan') {
+      args.push('--gpu-context=winvk');
+    } else {
+      args.push('--gpu-context=d3d11');
+    }
+    if (settings.player.hdrMode === 'tone-map') {
+      args.push(
+        '--target-colorspace-hint=auto',
+        '--target-prim=bt.709',
+        '--target-trc=gamma2.2',
+        '--tone-mapping=auto'
+      );
+    } else if (settings.player.hdrMode === 'passthrough') {
+      args.push(
+        '--target-colorspace-hint=yes',
+        '--target-colorspace-hint-mode=source'
+      );
+    } else {
+      args.push('--target-colorspace-hint=auto');
+    }
+    return args;
+  }
+
+  private connectPipe(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let attempts = 0;
+      const tryConnect = (): void => {
+        attempts += 1;
+        const socket = createConnection(this.pipeName);
+        const onError = (): void => {
+          socket.destroy();
+          if (attempts >= 50) {
+            reject(new Error('Timed out connecting to the MPV IPC pipe.'));
+            return;
+          }
+          setTimeout(tryConnect, 100);
+        };
+        socket.once('error', onError);
+        socket.once('connect', () => {
+          socket.off('error', onError);
+          socket.on('error', () => this.closeSocket());
+          socket.on('close', () => this.closeSocket());
+          socket.on('data', (chunk: Buffer) => this.onData(chunk));
+          this.socket = socket;
+          resolve();
+        });
+      };
+      tryConnect();
+    });
+  }
+
+  private command(command: unknown[]): Promise<unknown> {
+    if (!this.socket || this.socket.destroyed) {
+      return Promise.reject(new Error('MPV IPC is not connected.'));
+    }
+    const requestId = this.nextRequestId++;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(requestId);
+        reject(new Error(`MPV command timed out: ${String(command[0])}`));
+      }, 5000);
+      this.pending.set(requestId, {
+        resolve,
+        reject,
+        timer
+      });
+      this.socket!.write(`${JSON.stringify({
+        command,
+        request_id: requestId
+      })}\n`);
+    });
+  }
+
+  private onData(chunk: Buffer): void {
+    this.readBuffer += chunk.toString('utf8');
+    let boundary = this.readBuffer.indexOf('\n');
+    while (boundary >= 0) {
+      const line = this.readBuffer.slice(0, boundary).trim();
+      this.readBuffer = this.readBuffer.slice(boundary + 1);
+      if (line) {
+        try {
+          this.onMessage(JSON.parse(line) as MpvMessage);
+        } catch {
+          // Ignore malformed MPV output without taking down playback.
+        }
+      }
+      boundary = this.readBuffer.indexOf('\n');
+    }
+  }
+
+  private onMessage(message: MpvMessage): void {
+    if (message.request_id) {
+      const pending = this.pending.get(message.request_id);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pending.delete(message.request_id);
+        if (message.error && message.error !== 'success') {
+          pending.reject(new Error(`MPV: ${message.error}`));
+        } else {
+          pending.resolve(message.data);
+        }
+      }
+    }
+
+    if (message.event === 'property-change' && message.name) {
+      this.onProperty(message.name, message.data);
+      return;
+    }
+    if (message.event === 'file-loaded') {
+      this.setState({
+        ...this.stateValue,
+        status: this.stateValue.paused ? 'paused' : 'playing',
+        buffering: false,
+        error: null
+      });
+      this.emit('file-loaded', this.state);
+      return;
+    }
+    if (message.event === 'playback-restart') {
+      this.emit('playback-restart', this.state);
+      return;
+    }
+    if (message.event === 'seek') {
+      this.emit('seek', this.state);
+      return;
+    }
+    if (message.event === 'end-file') {
+      this.setState({
+        ...this.stateValue,
+        status: 'stopped',
+        paused: true,
+        buffering: false
+      });
+      this.emit('end-file', message.reason ?? 'unknown');
+    }
+  }
+
+  private onProperty(name: string, value: unknown): void {
+    switch (name) {
+      case 'time-pos':
+        this.patchState({
+          positionSeconds: typeof value === 'number' ? value : 0
+        });
+        break;
+      case 'duration':
+        this.patchState({
+          durationSeconds: typeof value === 'number' ? value : 0
+        });
+        break;
+      case 'pause': {
+        const paused = Boolean(value);
+        this.patchState({
+          paused,
+          status:
+            this.stateValue.status === 'loading'
+              ? this.stateValue.status
+              : paused
+                ? 'paused'
+                : 'playing'
+        });
+        break;
+      }
+      case 'paused-for-cache': {
+        const buffering = Boolean(value);
+        this.patchState({
+          buffering,
+          status: buffering
+            ? 'buffering'
+            : this.stateValue.paused
+              ? 'paused'
+              : 'playing'
+        });
+        break;
+      }
+      case 'volume':
+        this.patchState({
+          volume: typeof value === 'number' ? value : this.stateValue.volume
+        });
+        break;
+      case 'mute':
+        this.patchState({ muted: Boolean(value) });
+        break;
+      case 'fullscreen':
+        this.patchState({ fullscreen: Boolean(value) });
+        break;
+      case 'track-list':
+        {
+          const tracks = this.mapTracks(value);
+          this.patchState({ tracks });
+          if (
+            this.pendingSubtitlePreference &&
+            Array.isArray(value) &&
+            value.length > 0
+          ) {
+            const preference = this.pendingSubtitlePreference;
+            this.pendingSubtitlePreference = null;
+            void this.applySubtitlePreference(tracks, preference);
+          }
+        }
+        break;
+      case 'video-params': {
+        const params =
+          value && typeof value === 'object'
+            ? value as Record<string, unknown>
+            : {};
+        this.updateDiagnostics({
+          videoParams:
+            typeof params.w === 'number' && typeof params.h === 'number'
+              ? `${params.w}×${params.h}`
+              : null,
+          colorPrimaries:
+            typeof params.primaries === 'string' ? params.primaries : null,
+          colorTransfer:
+            typeof params.gamma === 'string' ? params.gamma : null,
+          colorMatrix:
+            typeof params.colormatrix === 'string' ? params.colormatrix : null,
+          colorLevels:
+            typeof params.colorlevels === 'string' ? params.colorlevels : null,
+          lightType:
+            typeof params.light === 'string' ? params.light : null,
+          sourcePixelFormat:
+            typeof params.pixelformat === 'string' ? params.pixelformat : null,
+          masteringMinLuminance: this.numberOrNull(params['min-luma']),
+          masteringMaxLuminance: this.numberOrNull(params['max-luma']),
+          maxCll: this.numberOrNull(params['max-cll']),
+          maxFall: this.numberOrNull(params['max-fall'])
+        });
+        break;
+      }
+      case 'video-target-params': {
+        const params =
+          value && typeof value === 'object'
+            ? value as Record<string, unknown>
+            : {};
+        this.updateDiagnostics({
+          outputPrimaries:
+            typeof params.primaries === 'string' ? params.primaries : null,
+          outputTransfer:
+            typeof params.gamma === 'string' ? params.gamma : null,
+          outputMatrix:
+            typeof params.colormatrix === 'string' ? params.colormatrix : null,
+          outputLevels:
+            typeof params.colorlevels === 'string' ? params.colorlevels : null,
+          outputPixelFormat:
+            typeof params.pixelformat === 'string' ? params.pixelformat : null,
+          outputMinLuminance: this.numberOrNull(params['min-luma']),
+          outputMaxLuminance: this.numberOrNull(params['max-luma'])
+        });
+        break;
+      }
+      case 'audio-out-params': {
+        const params =
+          value && typeof value === 'object'
+            ? value as Record<string, unknown>
+            : {};
+        this.updateDiagnostics({
+          audioOutputFormat:
+            typeof params.format === 'string' ? params.format : null,
+          audioOutputChannels:
+            typeof params['hr-channels'] === 'string'
+              ? params['hr-channels']
+              : typeof params.channels === 'string'
+                ? params.channels
+                : null,
+          audioOutputSampleRate:
+            typeof params.samplerate === 'number' ? params.samplerate : null
+        });
+        break;
+      }
+      case 'estimated-display-fps':
+        this.updateDiagnostics({
+          displayFps: typeof value === 'number' ? value : 0
+        });
+        break;
+      case 'display-names':
+        this.updateDiagnostics({
+          displayNames: Array.isArray(value)
+            ? value.filter((name): name is string => typeof name === 'string')
+            : []
+        });
+        break;
+      case 'current-vo':
+        this.updateDiagnostics({
+          currentVo: typeof value === 'string' ? value : null
+        });
+        break;
+      case 'target-colorspace-hint':
+        this.updateDiagnostics({
+          colorHint: typeof value === 'string' ? value : null
+        });
+        break;
+      case 'target-colorspace-hint-mode':
+        this.updateDiagnostics({
+          colorHintMode: typeof value === 'string' ? value : null
+        });
+        break;
+      case 'tone-mapping':
+        this.updateDiagnostics({
+          toneMapping: typeof value === 'string' ? value : null
+        });
+        break;
+      case 'hwdec-current':
+        this.updateDiagnostics({
+          hwdec: typeof value === 'string' ? value : null
+        });
+        break;
+      case 'cache-duration':
+        this.updateDiagnostics({
+          cacheDurationSeconds: typeof value === 'number' ? value : 0
+        });
+        break;
+      case 'vo-drop-frame-count':
+        this.updateDiagnostics({
+          droppedFrames: typeof value === 'number' ? value : 0
+        });
+        break;
+    }
+  }
+
+  private mapTracks(value: unknown): TrackInfo[] {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((entry): TrackInfo[] => {
+      if (!entry || typeof entry !== 'object') return [];
+      const track = entry as Record<string, unknown>;
+      if (track.type !== 'audio' && track.type !== 'sub') return [];
+      if (typeof track.id !== 'number') return [];
+      const type = track.type === 'audio' ? 'audio' : 'subtitle';
+      return [{
+        id: track.id,
+        ffIndex: typeof track['ff-index'] === 'number' ? track['ff-index'] : null,
+        type,
+        title:
+          typeof track.title === 'string'
+            ? track.title
+            : `${type === 'audio' ? 'Audio' : 'Subtitle'} ${track.id}`,
+        language: typeof track.lang === 'string' ? track.lang : null,
+        codec: typeof track.codec === 'string' ? track.codec : null,
+        selected: Boolean(track.selected),
+        default: Boolean(track.default),
+        external: Boolean(track.external),
+        forced: Boolean(track.forced)
+      }];
+    });
+  }
+
+  private async applySubtitlePreference(
+    tracks: TrackInfo[],
+    preference: MpvSubtitlePreference
+  ): Promise<void> {
+    const subtitles = tracks.filter((track) => track.type === 'subtitle');
+    const explicit = preference.streamIndex === null
+      ? null
+      : subtitles.find((track) => track.ffIndex === preference.streamIndex) ??
+        null;
+    const automatic = preference.enabled && preference.streamIndex === null
+      ? choosePreferredSubtitle(
+          subtitles.map((track) => ({
+            id: track.id,
+            language: track.language,
+            title: track.title,
+            isDefault: track.default,
+            isForced: track.forced
+          })),
+          preference.language
+        )
+      : null;
+    await this.command([
+      'set_property',
+      'sid',
+      explicit?.id ?? automatic?.id ?? 'no'
+    ]).catch(() => undefined);
+  }
+
+  private patchState(patch: Partial<PlaybackState>): void {
+    this.setState({
+      ...this.stateValue,
+      ...patch
+    });
+  }
+
+  private updateDiagnostics(
+    patch: Partial<PlaybackState['diagnostics']>
+  ): void {
+    this.setState({
+      ...this.stateValue,
+      diagnostics: {
+        ...this.stateValue.diagnostics,
+        ...patch
+      }
+    });
+  }
+
+  private numberOrNull(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+
+  private setState(state: PlaybackState): void {
+    this.stateValue = state;
+    this.emit('state', this.state);
+    this.events.emitClient({
+      type: 'playback',
+      data: this.state
+    });
+  }
+
+  private fail(message: string): void {
+    this.setState({
+      ...this.stateValue,
+      status: 'error',
+      paused: true,
+      buffering: false,
+      error: message
+    });
+  }
+
+  private closeSocket(): void {
+    if (this.socket) {
+      this.socket.removeAllListeners();
+      this.socket.destroy();
+      this.socket = null;
+    }
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error('MPV IPC disconnected.'));
+    }
+    this.pending.clear();
+  }
+
+  private async candidatePaths(overridePath?: string): Promise<string[]> {
+    const settingsPath = this.config.settings.player.mpvPath.trim();
+    const environmentPath = process.env.JELLYCLIENT_MPV_PATH?.trim();
+    const candidates = [
+      overridePath,
+      settingsPath,
+      environmentPath,
+      join(process.resourcesPath, 'mpv', 'mpv.exe'),
+      join(app.getAppPath(), 'resources', 'mpv', 'mpv.exe'),
+      join(homedir(), 'scoop', 'apps', 'mpv', 'current', 'mpv.exe'),
+      'C:\\ProgramData\\chocolatey\\bin\\mpv.exe',
+      'C:\\Program Files\\mpv\\mpv.exe',
+      'C:\\Program Files (x86)\\mpv\\mpv.exe'
+    ].filter((value): value is string => Boolean(value));
+
+    try {
+      const where = await new Promise<string[]>((resolve) => {
+        const child = spawn('where.exe', ['mpv.exe'], { windowsHide: true });
+        let output = '';
+        child.stdout.on('data', (chunk: Buffer) => {
+          output += chunk.toString('utf8');
+        });
+        child.once('exit', () => {
+          resolve(output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+        });
+        child.once('error', () => resolve([]));
+      });
+      candidates.push(...where);
+    } catch {
+      // PATH discovery is optional.
+    }
+
+    return [...new Set(candidates)];
+  }
+
+  private readVersion(executablePath: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(executablePath, ['--version'], {
+        windowsHide: true
+      });
+      let output = '';
+      child.stdout.on('data', (chunk: Buffer) => {
+        output += chunk.toString('utf8');
+      });
+      child.once('error', reject);
+      child.once('exit', (code) => {
+        if (code !== 0) {
+          reject(new Error('MPV version probe failed.'));
+          return;
+        }
+        resolve(output.split(/\r?\n/)[0]?.trim() || 'mpv');
+      });
+    });
+  }
+}
