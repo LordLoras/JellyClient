@@ -1,11 +1,11 @@
 # JellyClient
 
 JellyClient is a Windows-first standalone Jellyfin client built around a
-separate native MPV video window. The first alpha focuses on HDR10/PQ output,
-ASS/SSA and PGS subtitles, explicit audio/subtitle track selection, and
-SyncPlay that is joined once inside the same client that owns playback.
+separate native MPV video window. The project aims to provide dependable
+HDR10/PQ playback, ASS/SSA and PGS subtitles, explicit audio/subtitle track
+selection, and first-class SyncPlay without a browser or cast handoff.
 
-## What the alpha includes
+## Features
 
 - Jellyfin server, port, optional base-path, username, and password sign-in UI.
 - Password-free JSON configuration and a Windows-encrypted saved access token.
@@ -37,7 +37,7 @@ SyncPlay that is joined once inside the same client that owns playback.
 - Windows 11 x64.
 - A current Jellyfin server.
 - A recent 64-bit MPV build (MPV 0.38 or newer).
-- Windows HDR enabled on the Hisense display for HDR10 output.
+- Windows HDR enabled when using HDR10 output on an HDR-capable display.
 
 MPV is not redistributed in this repository yet. Install a trusted current
 Windows build, then select `mpv.exe` under **Settings → MPV + HDR output**.
@@ -70,28 +70,27 @@ The NSIS installer is written to `release/`.
 4. Leave **Remember this session** on to save only the access token encrypted
    with Windows. The password is discarded after the login request.
 5. Open Settings, select or confirm `mpv.exe`, choose D3D11, and leave HDR
-   behavior on **Automatic HDR10 passthrough** for the initial Hisense test.
+   behavior on **Automatic HDR10 passthrough** unless testing another output
+   policy.
 6. Browse and play locally, or use **Watch together** on a title. That action
    creates and joins the room before setting its queue; there is no second MPV
    or browser-side join.
 7. During playback, select the gauge icon in the player dock. A green
    **Direct play**, **PQ input**, and **PQ display target** chain is the expected
-   HDR10 path. The TV's own HDR badge remains the final end-to-end check.
+   HDR10 path. The display's own HDR indicator remains the final end-to-end
+   check.
 
 See [Configuration](docs/CONFIGURATION.md) and
-[Windows alpha test matrix](docs/TEST_MATRIX.md) for details.
+[Windows test matrix](docs/TEST_MATRIX.md) for details.
 
-## Current alpha boundaries
+## Project direction
 
-- Dolby Vision is intentionally deferred to a future native VIDAA client.
-- HDMI audio bitstream passthrough is not exposed; MPV decodes to PC speakers.
-- MPV is selected separately and is not yet bundled with the installer.
-- Quick Connect, multiple saved servers, Live TV, downloads, and music-player
-  behavior are not part of this playback-first alpha.
-- Correct HDR signaling still needs visual validation on the target Hisense,
-  GPU driver, HDMI input, and Windows HDR configuration.
-- SyncPlay must be validated against the user's live server and at least one
-  second participant before this build should be treated as stable.
+Development is focused on dependable Windows playback, observable HDR and
+tone-mapping decisions, broad subtitle support, and low-friction SyncPlay.
+Longer-term goals include a native VIDAA client for platform-native Dolby
+Vision playback, optional HDMI audio bitstream passthrough, bundled-player
+distribution, and broader Jellyfin features such as Quick Connect, multiple
+saved servers, Live TV, downloads, and music.
 
 The detailed design and later VIDAA boundary are in
 [the project plan](docs/PROJECT_PLAN.md).
