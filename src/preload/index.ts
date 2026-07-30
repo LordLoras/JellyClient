@@ -18,6 +18,8 @@ const api: JellyClientApi = {
     ipcRenderer.invoke('auth:connect', input),
   disconnect: () => ipcRenderer.invoke('auth:disconnect'),
   getHome: () => ipcRenderer.invoke('catalog:home'),
+  discardPlaybackProgress: (itemId: string) =>
+    ipcRenderer.invoke('catalog:discard-progress', itemId),
   getItems: (query: CatalogQuery) =>
     ipcRenderer.invoke('catalog:items', query),
   getItem: (itemId: string) =>

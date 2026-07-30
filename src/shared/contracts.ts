@@ -1,5 +1,5 @@
 export const APP_NAME = 'JellyClient';
-export const APP_VERSION = '0.1.3';
+export const APP_VERSION = '0.1.7';
 export const TICKS_PER_SECOND = 10_000_000;
 
 export type ConnectionStatus =
@@ -87,6 +87,12 @@ export interface LibraryView {
   imageUrl: string | null;
 }
 
+export interface MediaFormatInfo {
+  resolution: string | null;
+  videoRange: string | null;
+  audio: string | null;
+}
+
 export interface MediaItem {
   id: string;
   name: string;
@@ -105,6 +111,7 @@ export interface MediaItem {
   isFavorite: boolean;
   isFolder: boolean;
   canPlay: boolean;
+  mediaFormat: MediaFormatInfo;
   imageUrl: string | null;
   backdropUrl: string | null;
 }
@@ -112,6 +119,7 @@ export interface MediaItem {
 export interface HomePayload {
   libraries: LibraryView[];
   resume: MediaItem[];
+  nextUp: MediaItem[];
   latest: MediaItem[];
 }
 
@@ -274,6 +282,7 @@ export type ClientEvent =
   | { type: 'connection'; data: ConnectionState }
   | { type: 'playback'; data: PlaybackState }
   | { type: 'syncplay'; data: SyncPlayState }
+  | { type: 'catalog-changed'; data: { reason: 'library' } }
   | {
       type: 'notice';
       data: { level: 'info' | 'warning' | 'error'; message: string };
@@ -284,6 +293,7 @@ export interface JellyClientApi {
   connect(input: ConnectionInput): Promise<ConnectionState>;
   disconnect(): Promise<ConnectionState>;
   getHome(): Promise<HomePayload>;
+  discardPlaybackProgress(itemId: string): Promise<HomePayload>;
   getItems(query: CatalogQuery): Promise<ItemsPage>;
   getItem(itemId: string): Promise<ItemDetails>;
   play(input: PlayMediaInput): Promise<PlaybackState>;

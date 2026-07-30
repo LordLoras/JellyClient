@@ -26,6 +26,11 @@ protocol.registerSchemesAsPrivileged([
   }
 ]);
 
+const userDataOverride = process.env.JELLYCLIENT_USER_DATA_PATH?.trim();
+if (userDataOverride) {
+  app.setPath('userData', userDataOverride);
+}
+
 let mainWindow: BrowserWindow | null = null;
 let cleanupIpc: (() => void) | null = null;
 let playbackService: PlaybackService | null = null;

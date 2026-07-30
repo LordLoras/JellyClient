@@ -2,7 +2,9 @@ import { EventEmitter } from 'node:events';
 import { Jellyfin } from '@jellyfin/sdk/lib/jellyfin.js';
 import type { Api } from '@jellyfin/sdk/lib/api.js';
 import { getItemsApi } from '@jellyfin/sdk/lib/utils/api/items-api.js';
+import { getPlaystateApi } from '@jellyfin/sdk/lib/utils/api/playstate-api.js';
 import { getSystemApi } from '@jellyfin/sdk/lib/utils/api/system-api.js';
+import { getTvShowsApi } from '@jellyfin/sdk/lib/utils/api/tv-shows-api.js';
 import { getUserApi } from '@jellyfin/sdk/lib/utils/api/user-api.js';
 import { getUserLibraryApi } from '@jellyfin/sdk/lib/utils/api/user-library-api.js';
 import { getUserViewsApi } from '@jellyfin/sdk/lib/utils/api/user-views-api.js';
@@ -29,9 +31,11 @@ import {
 } from '@shared/contracts.js';
 import { initialConnectionState } from '@shared/defaults.js';
 import { buildServerUrl } from '@shared/server-url.js';
+import { isVisibleCatalogItem } from './catalog-items.js';
 import { ConfigService } from './config-service.js';
 import { ClientEventBus } from './event-bus.js';
 import { userFacingError } from './errors.js';
+import { mediaFormatForItem } from './media-format.js';
 
 const ITEM_FIELDS = [
   ItemFields.Overview,
@@ -39,9 +43,25 @@ const ITEM_FIELDS = [
   ItemFields.Genres,
   ItemFields.Studios,
   ItemFields.People,
+  ItemFields.DateCreated,
   ItemFields.PrimaryImageAspectRatio,
-  ItemFields.MediaSources
+  ItemFields.MediaStreams,
+  ItemFields.MediaSources,
+  ItemFields.RecursiveItemCount,
+  ItemFields.ChildCount
 ];
+
+const DEFAULT_NEXT_UP_DAYS = 365;
+
+function dateOnlyDaysAgo(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
+  ].join('-');
+}
 
 export class JellyfinService extends EventEmitter {
   private readonly config: ConfigService;
@@ -260,7 +280,12 @@ export class JellyfinService extends EventEmitter {
   }
 
   async getHome(): Promise<HomePayload> {
-    const [viewsResponse, resumeResponse, latestResponse] = await Promise.all([
+    const [
+      viewsResponse,
+      resumeResponse,
+      nextUpResponse,
+      latestResponse
+    ] = await Promise.all([
       getUserViewsApi(this.api).getUserViews({
         userId: this.userId
       }),
@@ -272,6 +297,23 @@ export class JellyfinService extends EventEmitter {
         enableImages: true,
         enableUserData: true,
         excludeActiveSessions: true
+      }),
+      getTvShowsApi(this.api).getNextUp({
+        userId: this.userId,
+        limit: 24,
+        fields: ITEM_FIELDS,
+        enableImages: true,
+        imageTypeLimit: 1,
+        enableImageTypes: [
+          ImageType.Primary,
+          ImageType.Backdrop,
+          ImageType.Thumb
+        ],
+        enableUserData: true,
+        nextUpDateCutoff: dateOnlyDaysAgo(DEFAULT_NEXT_UP_DAYS),
+        enableTotalRecordCount: false,
+        enableResumable: false,
+        enableRewatching: false
       }),
       getUserLibraryApi(this.api).getLatestMedia({
         userId: this.userId,
@@ -295,8 +337,19 @@ export class JellyfinService extends EventEmitter {
       resume: (resumeResponse.data.Items ?? []).map((item: BaseItemDto) =>
         this.mapItem(item)
       ),
+      nextUp: (nextUpResponse.data.Items ?? []).map((item: BaseItemDto) =>
+        this.mapItem(item)
+      ),
       latest: latestResponse.data.map((item: BaseItemDto) => this.mapItem(item))
     };
+  }
+
+  async discardPlaybackProgress(itemId: string): Promise<HomePayload> {
+    await getPlaystateApi(this.api).markUnplayedItem({
+      itemId,
+      userId: this.userId
+    });
+    return this.getHome();
   }
 
   async getItems(query: CatalogQuery): Promise<ItemsPage> {
@@ -318,12 +371,17 @@ export class JellyfinService extends EventEmitter {
       enableUserData: true,
       enableTotalRecordCount: true
     });
+    const returnedItems = response.data.Items ?? [];
+    const visibleItems = returnedItems.filter(isVisibleCatalogItem);
+    const hiddenCount = returnedItems.length - visibleItems.length;
+    const serverTotal = response.data.TotalRecordCount ?? returnedItems.length;
+
     return {
-      items: (response.data.Items ?? []).map((item: BaseItemDto) =>
+      items: visibleItems.map((item: BaseItemDto) =>
         this.mapItem(item)
       ),
       startIndex: query.startIndex,
-      totalRecordCount: response.data.TotalRecordCount ?? 0
+      totalRecordCount: Math.max(0, serverTotal - hiddenCount)
     };
   }
 
@@ -455,6 +513,7 @@ export class JellyfinService extends EventEmitter {
         item.Type === BaseItemKind.Movie ||
         item.Type === BaseItemKind.Episode ||
         item.Type === BaseItemKind.Video,
+      mediaFormat: mediaFormatForItem(item),
       imageUrl:
         id && primaryTag ? this.imageUrl(id, 'Primary', primaryTag) : null,
       backdropUrl:

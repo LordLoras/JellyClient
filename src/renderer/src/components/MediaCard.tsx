@@ -1,5 +1,6 @@
 import {
   Check,
+  ListX,
   Play,
   Star
 } from 'lucide-react';
@@ -9,16 +10,27 @@ import { formatDurationFromTicks } from '../format';
 interface Props {
   item: MediaItem;
   landscape?: boolean;
+  presentation?: 'standard' | 'next-up';
   onOpen(item: MediaItem): void;
   onPlay(item: MediaItem): void;
+  onDismiss?(item: MediaItem): void;
 }
 
 export function MediaCard({
   item,
   landscape = false,
+  presentation = 'standard',
   onOpen,
-  onPlay
+  onPlay,
+  onDismiss
 }: Props) {
+  const isNextUp = presentation === 'next-up' && Boolean(item.seriesName);
+  const title = isNextUp ? item.seriesName! : item.name;
+  const context = isNextUp
+    ? [item.indexLabel, item.name].filter(Boolean).join(' · ')
+    : item.seriesName
+      ? [item.seriesName, item.indexLabel].filter(Boolean).join(' · ')
+      : item.indexLabel ?? item.productionYear ?? item.type;
   return (
     <article className={`media-card${landscape ? ' media-card--landscape' : ''}`}>
       <div className="media-card__art">
@@ -51,11 +63,21 @@ export function MediaCard({
             <Play fill="currentColor" />
           </button>
         )}
+        {onDismiss && (
+          <button
+            className="media-card__dismiss"
+            aria-label={`Remove ${item.name} from Continue Watching`}
+            title="Remove from Continue Watching"
+            onClick={() => onDismiss(item)}
+          >
+            <ListX />
+          </button>
+        )}
       </div>
       <button className="media-card__copy" onClick={() => onOpen(item)}>
-        <strong>{item.name}</strong>
+        <strong>{title}</strong>
         <span>
-          {item.indexLabel ?? item.productionYear ?? item.type}
+          {context}
           {item.runtimeTicks ? ` · ${formatDurationFromTicks(item.runtimeTicks)}` : ''}
           {item.communityRating ? (
             <em><Star fill="currentColor" /> {item.communityRating.toFixed(1)}</em>

@@ -30,6 +30,11 @@ test.beforeAll(async () => {
         'test-results',
         'e2e-profile',
         'config.json'
+      ),
+      JELLYCLIENT_USER_DATA_PATH: resolve(
+        'test-results',
+        'e2e-profile',
+        'electron-data'
       )
     }
   });

@@ -7,8 +7,10 @@ interface Props {
   kicker?: string;
   items: MediaItem[];
   landscape?: boolean;
+  presentation?: 'standard' | 'next-up';
   onOpen(item: MediaItem): void;
   onPlay(item: MediaItem): void;
+  onDismiss?(item: MediaItem): void;
 }
 
 export function MediaRail({
@@ -16,8 +18,10 @@ export function MediaRail({
   kicker,
   items,
   landscape,
+  presentation,
   onOpen,
-  onPlay
+  onPlay,
+  onDismiss
 }: Props) {
   if (items.length === 0) return null;
   return (
@@ -35,8 +39,10 @@ export function MediaRail({
             key={item.id}
             item={item}
             landscape={landscape ?? false}
+            presentation={presentation ?? 'standard'}
             onOpen={onOpen}
             onPlay={onPlay}
+            {...(onDismiss ? { onDismiss } : {})}
           />
         ))}
       </div>

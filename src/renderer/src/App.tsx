@@ -15,6 +15,7 @@ import {
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent
 } from 'react';
@@ -24,6 +25,7 @@ import type {
   PlayMediaInput
 } from '@shared/contracts.js';
 import { Brand } from './components/Brand';
+import { DiscardProgressDialog } from './components/DiscardProgressDialog';
 import { Hero } from './components/Hero';
 import { ItemDetailsPanel } from './components/ItemDetailsPanel';
 import { LoginScreen } from './components/LoginScreen';
@@ -42,11 +44,32 @@ export function App() {
   const store = useAppStore();
   const [syncPanelOpen, setSyncPanelOpen] = useState(false);
   const [searchText, setSearchText] = useState('');
+  const [discardItem, setDiscardItem] = useState<MediaItem | null>(null);
+  const [discardBusy, setDiscardBusy] = useState(false);
+  const homeRefreshTimer = useRef<number | null>(null);
 
   useEffect(() => {
     let active = true;
     const unsubscribe = window.jellyClient.subscribe((event) => {
-      if (active) useAppStore.getState().applyEvent(event);
+      if (!active) return;
+      const previousPlayback = useAppStore.getState().playback;
+      useAppStore.getState().applyEvent(event);
+      if (
+        event.type === 'catalog-changed' ||
+        (
+          event.type === 'playback' &&
+          event.data.status === 'stopped' &&
+          previousPlayback?.status !== 'stopped'
+        )
+      ) {
+        if (homeRefreshTimer.current !== null) {
+          window.clearTimeout(homeRefreshTimer.current);
+        }
+        homeRefreshTimer.current = window.setTimeout(() => {
+          homeRefreshTimer.current = null;
+          void loadHome(true);
+        }, 900);
+      }
     });
     void window.jellyClient
       .bootstrap()
@@ -60,9 +83,34 @@ export function App() {
       });
     return () => {
       active = false;
+      if (homeRefreshTimer.current !== null) {
+        window.clearTimeout(homeRefreshTimer.current);
+      }
       unsubscribe();
     };
   }, []);
+
+  const connected = store.connection?.status === 'connected';
+  useEffect(() => {
+    if (!connected) return;
+    const refreshVisibleHome = () => {
+      const state = useAppStore.getState();
+      if (
+        document.visibilityState === 'visible' &&
+        state.view.kind === 'home'
+      ) {
+        void loadHome(true);
+      }
+    };
+    const timer = window.setInterval(refreshVisibleHome, 5 * 60_000);
+    window.addEventListener('focus', refreshVisibleHome);
+    document.addEventListener('visibilitychange', refreshVisibleHome);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refreshVisibleHome);
+      document.removeEventListener('visibilitychange', refreshVisibleHome);
+    };
+  }, [connected]);
 
   const hero = useMemo(() => playableHero(store.home), [store.home]);
 
@@ -189,7 +237,10 @@ export function App() {
             active={store.view.kind === 'home'}
             icon={<Home />}
             label="Home"
-            onClick={() => store.setView({ kind: 'home' })}
+            onClick={() => {
+              store.setView({ kind: 'home' });
+              void loadHome(true);
+            }}
           />
           <p>LIBRARIES</p>
           {(store.home?.libraries ?? []).map((library) => (
@@ -257,7 +308,12 @@ export function App() {
               aria-label="Sign out"
               onClick={async () => {
                 store.setConnection(await window.jellyClient.disconnect());
-                store.setHome({ libraries: [], resume: [], latest: [] });
+                store.setHome({
+                  libraries: [],
+                  resume: [],
+                  nextUp: [],
+                  latest: []
+                });
               }}
             >
               <LogOut />
@@ -283,6 +339,7 @@ export function App() {
               onOpen={openItem}
               onPlay={play}
               onWatchTogether={watchTogether}
+              onDiscardProgress={setDiscardItem}
             />
           )}
           {(store.view.kind === 'library' || store.view.kind === 'search') && (
@@ -341,6 +398,33 @@ export function App() {
         </>
       )}
 
+      {discardItem && (
+        <DiscardProgressDialog
+          item={discardItem}
+          busy={discardBusy}
+          onCancel={() => {
+            if (!discardBusy) setDiscardItem(null);
+          }}
+          onConfirm={() => {
+            setDiscardBusy(true);
+            void window.jellyClient
+              .discardPlaybackProgress(discardItem.id)
+              .then((home) => {
+                store.setHome(home);
+                store.addNotice(
+                  'info',
+                  `${discardItem.name} was removed from Continue Watching.`
+                );
+                setDiscardItem(null);
+              })
+              .catch((error) =>
+                store.addNotice('error', friendlyError(error))
+              )
+              .finally(() => setDiscardBusy(false));
+          }}
+        />
+      )}
+
       <PlayerDock
         playback={store.playback}
         syncPlay={store.syncPlay}
@@ -360,12 +444,14 @@ function HomeView({
   hero,
   onOpen,
   onPlay,
-  onWatchTogether
+  onWatchTogether,
+  onDiscardProgress
 }: {
   hero: MediaItem | null;
   onOpen(item: MediaItem): void;
   onPlay(item: MediaItem): void;
   onWatchTogether(item: MediaItem): void;
+  onDiscardProgress(item: MediaItem): void;
 }) {
   const home = useAppStore((state) => state.home);
   const syncPlay = useAppStore((state) => state.syncPlay)!;
@@ -394,6 +480,16 @@ function HomeView({
         title="Continue watching"
         items={home.resume}
         landscape
+        onOpen={onOpen}
+        onPlay={onPlay}
+        onDismiss={onDiscardProgress}
+      />
+      <MediaRail
+        kicker="YOUR NEXT EPISODE"
+        title="Up next"
+        items={home.nextUp}
+        landscape
+        presentation="next-up"
         onOpen={onOpen}
         onPlay={onPlay}
       />
@@ -458,8 +554,8 @@ function CatalogView({
       ) : !busy ? (
         <div className="empty-state">
           <Search />
-          <h2>No titles found</h2>
-          <p>Try a different library or a broader search.</p>
+          <h2>No playable titles found</h2>
+          <p>This view has no playable video yet.</p>
         </div>
       ) : null}
     </div>
@@ -517,15 +613,15 @@ function Notices() {
   );
 }
 
-async function loadHome(): Promise<void> {
+async function loadHome(background = false): Promise<void> {
   const state = useAppStore.getState();
-  state.setBusy(true);
+  if (!background) state.setBusy(true);
   try {
     state.setHome(await window.jellyClient.getHome());
   } catch (error) {
-    state.addNotice('error', friendlyError(error));
+    if (!background) state.addNotice('error', friendlyError(error));
   } finally {
-    state.setBusy(false);
+    if (!background) state.setBusy(false);
   }
 }
 

@@ -8,6 +8,7 @@ import type {
   SyncPlayState
 } from '@shared/contracts.js';
 import { formatDurationFromTicks } from '../format';
+import { MediaFormatBadges } from './MediaFormatBadges';
 
 interface Props {
   item: MediaItem;
@@ -39,7 +40,7 @@ export function Hero({
           {item.productionYear && <span>{item.productionYear}</span>}
           {item.officialRating && <span className="rating-chip">{item.officialRating}</span>}
           {item.runtimeTicks && <span><Clock3 /> {formatDurationFromTicks(item.runtimeTicks)}</span>}
-          <span className="hdr-chip">HDR PATH READY</span>
+          <MediaFormatBadges mediaFormat={item.mediaFormat} />
         </div>
         <p className="hero__overview">
           {item.overview ?? 'Ready for playback through the native MPV window.'}
@@ -56,11 +57,6 @@ export function Hero({
             </button>
           )}
         </div>
-      </div>
-      <div className="hero__format">
-        <span>OUTPUT</span>
-        <strong>HDR10</strong>
-        <small>PQ · BT.2020</small>
       </div>
     </section>
   );

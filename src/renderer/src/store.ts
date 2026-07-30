@@ -81,6 +81,7 @@ export const useAppStore = create<AppStore>((set) => ({
       if (event.type === 'connection') return { connection: event.data };
       if (event.type === 'playback') return { playback: event.data };
       if (event.type === 'syncplay') return { syncPlay: event.data };
+      if (event.type === 'catalog-changed') return {};
       const notice: Notice = {
         id: ++noticeSequence,
         ...event.data
@@ -113,5 +114,10 @@ export const useAppStore = create<AppStore>((set) => ({
 }));
 
 export function playableHero(home: HomePayload | null): MediaItem | null {
-  return home?.resume[0] ?? home?.latest.find((item) => item.canPlay) ?? null;
+  return (
+    home?.resume[0] ??
+    home?.nextUp[0] ??
+    home?.latest.find((item) => item.canPlay) ??
+    null
+  );
 }

@@ -26,6 +26,11 @@ describe('SyncPlay player readiness', () => {
     isFavorite: false,
     isFolder: false,
     canPlay: true,
+    mediaFormat: {
+      resolution: null,
+      videoRange: null,
+      audio: null
+    },
     imageUrl: null,
     backdropUrl: null
   };

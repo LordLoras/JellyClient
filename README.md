@@ -10,6 +10,9 @@ SyncPlay that is joined once inside the same client that owns playback.
 - Jellyfin server, port, optional base-path, username, and password sign-in UI.
 - Password-free JSON configuration and a Windows-encrypted saved access token.
 - Home, libraries, nested folders, search, item details, resume, and progress.
+- Confirmed removal from Continue Watching and a dedicated Jellyfin-powered
+  Up Next row matching Jellyfin Web's next-unwatched episode behavior, with
+  automatic refresh when newly scanned episodes arrive.
 - Direct play, direct stream/remux, and Jellyfin server transcode negotiation.
 - A managed MPV process using a private, per-launch Windows named pipe.
 - D3D11 and Vulkan/winvk output modes using `gpu-next`.
@@ -25,6 +28,8 @@ SyncPlay that is joined once inside the same client that owns playback.
 - A live signal inspector that separates Jellyfin transport, MPV's decoded
   input, display-target color parameters, tone mapping, GPU/VO state, audio
   output, dropped frames, and cache health.
+- Netflix-style source badges for resolution, HDR format, and audio layout
+  when Jellyfin supplies the corresponding media metadata.
 - A copyable, credential-free debug report and MPV's native statistics overlay.
 
 ## Requirements

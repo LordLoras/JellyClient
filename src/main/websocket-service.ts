@@ -131,6 +131,13 @@ export class JellyfinWebSocketService extends EventEmitter {
       this.startKeepAlive(Math.max(5, intervalSeconds));
     } else if (message.MessageType === 'KeepAlive') {
       this.send('KeepAlive');
+    } else if (message.MessageType === 'LibraryChanged') {
+      this.events.emitClient({
+        type: 'catalog-changed',
+        data: {
+          reason: 'library'
+        }
+      });
     }
     this.emit('message', message);
     this.emit(message.MessageType, message.Data);

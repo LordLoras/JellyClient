@@ -10,6 +10,7 @@ import type {
   SyncPlayState
 } from '@shared/contracts.js';
 import { formatDurationFromTicks } from '../format';
+import { MediaFormatBadges } from './MediaFormatBadges';
 
 interface Props {
   item: ItemDetails;
@@ -49,6 +50,7 @@ export function ItemDetailsPanel({
             {item.officialRating && <span className="rating-chip">{item.officialRating}</span>}
             {item.runtimeTicks && <span><Clock3 /> {formatDurationFromTicks(item.runtimeTicks)}</span>}
             {item.communityRating && <span><Star fill="currentColor" /> {item.communityRating.toFixed(1)}</span>}
+            <MediaFormatBadges mediaFormat={item.mediaFormat} />
           </div>
           {item.tagline && <blockquote>{item.tagline}</blockquote>}
           <p className="detail-sheet__overview">{item.overview ?? 'No overview is available.'}</p>

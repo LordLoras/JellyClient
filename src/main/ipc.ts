@@ -110,6 +110,11 @@ export function registerIpc(services: Services): () => void {
   });
 
   handle('catalog:home', async () => jellyfin.getHome());
+  handle('catalog:discard-progress', async (_event, itemId) => {
+    return jellyfin.discardPlaybackProgress(
+      z.string().min(1).max(100).parse(itemId)
+    );
+  });
   handle('catalog:items', async (_event, raw) => {
     return jellyfin.getItems(catalogQuerySchema.parse(raw));
   });
