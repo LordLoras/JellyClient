@@ -37,6 +37,11 @@ import type {
   VidaaTrackChoice
 } from './jellyfin-types.js';
 import { moveSpatialFocus } from './spatial-focus.js';
+import {
+  parseWebVtt,
+  subtitleAtTime,
+  type WebVttCue
+} from './webvtt.js';
 
 const TICKS_PER_SECOND = 10_000_000;
 
@@ -164,10 +169,35 @@ function NativePlayer({ plan, onExit }: { plan: VidaaPlaybackPlan; onExit(): voi
   const videoRef = useRef<HTMLVideoElement>(null);
   const startedRef = useRef(false);
   const stoppedRef = useRef(false);
+  const controlsTimerRef = useRef<number | null>(null);
   const [paused, setPaused] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
   const [position, setPosition] = useState(plan.startPositionSeconds);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [subtitleCues, setSubtitleCues] = useState<WebVttCue[]>([]);
+  const [subtitleError, setSubtitleError] = useState<string | null>(null);
+
+  function clearControlsTimer() {
+    if (controlsTimerRef.current !== null) {
+      window.clearTimeout(controlsTimerRef.current);
+      controlsTimerRef.current = null;
+    }
+  }
+
+  function revealControls() {
+    setControlsVisible(true);
+    clearControlsTimer();
+    const video = videoRef.current;
+    if (!video || video.paused || video.error) return;
+    controlsTimerRef.current = window.setTimeout(() => {
+      const currentVideo = videoRef.current;
+      if (currentVideo && !currentVideo.paused && !currentVideo.error) {
+        setControlsVisible(false);
+      }
+      controlsTimerRef.current = null;
+    }, 3_500);
+  }
 
   function report(event: VidaaPlaybackReport['event']) {
     const video = videoRef.current;
@@ -205,6 +235,7 @@ function NativePlayer({ plan, onExit }: { plan: VidaaPlaybackPlan; onExit(): voi
     const onKey = (event: KeyboardEvent) => {
       const video = videoRef.current;
       if (!video) return;
+      revealControls();
       if (event.key === 'Escape' || event.keyCode === 413) stop();
       else if (event.key === 'Enter' || event.key === ' ' || event.keyCode === 415 || event.keyCode === 19) {
         if (video.paused) void video.play(); else video.pause();
@@ -216,28 +247,75 @@ function NativePlayer({ plan, onExit }: { plan: VidaaPlaybackPlan; onExit(): voi
     window.addEventListener('keydown', onKey);
     return () => {
       window.clearInterval(timer);
+      clearControlsTimer();
       window.removeEventListener('keydown', onKey);
       if (!stoppedRef.current) report('stop');
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    setSubtitleCues([]);
+    setSubtitleError(null);
+    if (!plan.subtitleUrl) return;
+    void fetch(bridgeUrl(plan.subtitleUrl))
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Subtitle request failed (${response.status}).`);
+        }
+        return await response.text();
+      })
+      .then((contents) => {
+        if (cancelled) return;
+        const cues = parseWebVtt(contents);
+        if (cues.length === 0) {
+          throw new Error('The selected subtitle track contained no readable cues.');
+        }
+        setSubtitleCues(cues);
+      })
+      .catch((caught: unknown) => {
+        if (!cancelled) {
+          setSubtitleError(caught instanceof Error ? caught.message : String(caught));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [plan.subtitleUrl]);
+
   const seek = (amount: number) => {
     const video = videoRef.current;
     if (video) video.currentTime = Math.max(0, Math.min(video.duration || Infinity, video.currentTime + amount));
   };
+  const activeSubtitle = subtitleAtTime(subtitleCues, position);
   return (
-    <div className="native-player">
+    <div
+      className={`native-player${controlsVisible ? '' : ' native-player--controls-hidden'}`}
+      onFocusCapture={revealControls}
+      onMouseDown={revealControls}
+      onMouseMove={revealControls}
+    >
       <video
         autoPlay
         onDurationChange={(event) => setTotal(event.currentTarget.duration || 0)}
         onEnded={stop}
-        onError={() => setError('VIDAA could not open this negotiated stream. Check the delivery details below.')}
+        onError={() => {
+          clearControlsTimer();
+          setControlsVisible(true);
+          setError('VIDAA could not open this negotiated stream. Check the delivery details below.');
+        }}
         onLoadedMetadata={(event) => {
           if (plan.startPositionSeconds > 1) event.currentTarget.currentTime = plan.startPositionSeconds;
         }}
-        onPause={() => { setPaused(true); if (startedRef.current) report('progress'); }}
+        onPause={() => {
+          clearControlsTimer();
+          setControlsVisible(true);
+          setPaused(true);
+          if (startedRef.current) report('progress');
+        }}
         onPlay={() => {
           setPaused(false);
+          revealControls();
           if (!startedRef.current) { startedRef.current = true; report('start'); }
         }}
         onTimeUpdate={(event) => setPosition(event.currentTarget.currentTime)}
@@ -245,8 +323,15 @@ function NativePlayer({ plan, onExit }: { plan: VidaaPlaybackPlan; onExit(): voi
         ref={videoRef}
         src={bridgeUrl(plan.mediaUrl)}
       >
-        {plan.subtitleUrl && <track default kind="subtitles" label={plan.subtitleLabel ?? 'English'} src={bridgeUrl(plan.subtitleUrl)} srcLang={plan.subtitleLanguage ?? 'en'} />}
       </video>
+      {(activeSubtitle || subtitleError) && (
+        <div
+          aria-live="off"
+          className={`native-player__subtitles${controlsVisible ? ' native-player__subtitles--raised' : ''}`}
+        >
+          {activeSubtitle || subtitleError}
+        </div>
+      )}
       <div className="native-player__shade" />
       <header><div><p>{plan.item.seriesName ?? plan.item.type}</p><h1>{plan.item.name}</h1></div><button className="signal-button signal-button--quiet" data-focusable onClick={stop} type="button"><Square /> Stop</button></header>
       <aside>

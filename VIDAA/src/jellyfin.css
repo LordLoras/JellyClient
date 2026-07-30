@@ -112,6 +112,17 @@
 .native-player { position: fixed; z-index: 100; inset: 0; overflow: hidden; background: #000; }
 .native-player video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 .native-player__shade { position: absolute; inset: 0; background: linear-gradient(180deg,rgba(0,0,0,.72),transparent 23%,transparent 67%,rgba(0,0,0,.86)); pointer-events: none; }
+.native-player__shade,
+.native-player > header,
+.native-player > aside,
+.native-player > footer { opacity: 1; transition: opacity 220ms ease; }
+.native-player--controls-hidden { cursor: none; }
+.native-player--controls-hidden .native-player__shade,
+.native-player--controls-hidden > header,
+.native-player--controls-hidden > aside,
+.native-player--controls-hidden > footer { opacity: 0; pointer-events: none; }
+.native-player__subtitles { position: absolute; z-index: 3; right: 7vw; bottom: clamp(50px,7vh,90px); left: 7vw; color: #fff; font-family: 'Manrope Variable',sans-serif; font-size: clamp(24px,2.15vw,42px); font-weight: 650; line-height: 1.28; text-align: center; text-shadow: 0 2px 2px #000,0 0 5px #000,0 0 12px #000; white-space: pre-line; pointer-events: none; transition: bottom 220ms ease; }
+.native-player__subtitles--raised { bottom: clamp(155px,20vh,230px); }
 .native-player > header { position: absolute; top: 0; right: 0; left: 0; display: flex; align-items: flex-start; justify-content: space-between; padding: 30px 38px; }
 .native-player > header p { margin: 0 0 2px; color: var(--acid); font-size: 10px; font-weight: 850; letter-spacing: .15em; text-transform: uppercase; }
 .native-player > header h1 { margin: 0; font-family: 'Newsreader Variable',serif; font-size: 40px; font-weight: 440; }

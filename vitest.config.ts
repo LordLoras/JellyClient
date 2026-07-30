@@ -13,7 +13,10 @@ export default defineConfig({
   test: {
     environment: 'happy-dom',
     setupFiles: ['./src/renderer/src/test/setup.ts'],
-    include: ['src/**/*.test.{ts,tsx}'],
+    include: [
+      'src/**/*.test.{ts,tsx}',
+      'VIDAA/src/**/*.test.{ts,tsx}'
+    ],
     coverage: {
       reporter: ['text', 'html']
     }
