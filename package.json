@@ -1,8 +1,8 @@
 {
   "name": "jellyclient",
-  "version": "0.1.7",
+  "version": "0.2.0",
   "private": true,
-  "description": "Windows-first standalone Jellyfin client with HDR10 and first-class SyncPlay.",
+  "description": "Standalone Jellyfin clients for Windows and VIDAA televisions.",
   "type": "module",
   "main": "out/main/index.js",
   "author": "JellyClient contributors",
@@ -16,10 +16,12 @@
     "test:e2e": "pnpm build && playwright test",
     "test:watch": "vitest",
     "package:win": "pnpm build && electron-builder --win nsis",
-    "vidaa:probe": "vite --config VIDAA/vite.config.ts --host 0.0.0.0 --port 4173",
-    "vidaa:probe:tv": "pnpm vidaa:build && vite preview --config VIDAA/vite.config.ts --host 0.0.0.0 --port 80 --strictPort",
+    "vidaa:probe": "vite --config VIDAA/vite.config.ts --host 0.0.0.0",
     "vidaa:build": "tsc --noEmit -p VIDAA/tsconfig.json && vite build --config VIDAA/vite.config.ts",
-    "vidaa:preview": "vite preview --config VIDAA/vite.config.ts --host 0.0.0.0 --port 4173",
+    "vidaa:start": "vite preview --config VIDAA/vite.config.ts --host 0.0.0.0 --strictPort",
+    "vidaa:serve": "pnpm vidaa:build && pnpm vidaa:start",
+    "vidaa:probe:tv": "pnpm vidaa:serve",
+    "vidaa:preview": "pnpm vidaa:start",
     "preview": "electron-vite preview"
   },
   "dependencies": {

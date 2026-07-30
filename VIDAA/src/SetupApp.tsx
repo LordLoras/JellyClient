@@ -15,6 +15,7 @@ import {
   useMemo,
   useState
 } from 'react';
+import { pcUrl } from './bridge-url.js';
 import type {
   ExpectedSignal,
   ProbeConfig,
@@ -77,6 +78,7 @@ function newSource(): StoredProbeSource {
 }
 
 export function SetupApp() {
+  const setupUrl = pcUrl('/setup');
   const [payload, setPayload] = useState<SetupProbePayload | null>(null);
   const [config, setConfig] = useState<ProbeConfig>({
     version: 1,
@@ -98,7 +100,7 @@ export function SetupApp() {
       if (!response.ok) {
         throw new Error(
           response.status === 403
-            ? 'Setup is locked to the PC. Open http://localhost:4173/setup on the computer running the probe.'
+            ? `Setup is locked to the PC. Open ${setupUrl} on the computer running the probe.`
             : `Setup server returned ${response.status}.`
         );
       }

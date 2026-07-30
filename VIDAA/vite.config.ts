@@ -127,11 +127,30 @@ function text(
 }
 
 function lanUrls(request: IncomingMessage): string[] {
-  const host = request.headers.host ?? 'localhost:4173';
-  const port = host.includes(':') ? host.slice(host.lastIndexOf(':') + 1) : '4173';
+  const host = request.headers.host ?? '';
+  const rawPort = host.includes(':')
+    ? host.slice(host.lastIndexOf(':') + 1)
+    : '';
+  const parsedPort = Number(rawPort);
+  const port = Number.isInteger(parsedPort) && parsedPort > 0
+    ? parsedPort
+    : request.socket.localPort ?? 80;
 
   return lanAddresses()
-    .map((address) => `http://${address}:${port}/`);
+    .map((address) =>
+      port === 80
+        ? `http://${address}/`
+        : `http://${address}:${port}/`
+    );
+}
+
+function configuredPort(value: string | undefined, fallback: number): number {
+  if (!value?.trim()) return fallback;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('VIDAA_PORT must be a whole number between 1 and 65535.');
+  }
+  return port;
 }
 
 function cleanString(value: unknown, maxLength: number): string {
@@ -435,7 +454,7 @@ function probeServerPlugin(): Plugin {
   ) => {
     const url = new URL(
       request.url ?? '/',
-      `http://${request.headers.host ?? 'localhost:4173'}`
+      `http://${request.headers.host ?? `localhost:${request.socket.localPort ?? 4173}`}`
     );
 
     if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
@@ -520,31 +539,38 @@ function probeServerPlugin(): Plugin {
   };
 }
 
-export default defineConfig({
-  root: PROBE_ROOT,
-  base: './',
-  plugins: [
-    react(),
-    vidaaJellyfinBridgePlugin(),
-    probeServerPlugin()
-  ],
-  server: {
-    allowedHosts: lanHostnameAliases(),
-    cors: true,
-    host: '0.0.0.0',
-    port: 4173,
-    strictPort: true
-  },
-  preview: {
-    allowedHosts: lanHostnameAliases(),
-    cors: true,
-    host: '0.0.0.0',
-    port: 4173,
-    strictPort: true
-  },
-  build: {
-    outDir: 'dist',
-    emptyOutDir: true,
-    target: 'es2018'
-  }
+export default defineConfig(({ isPreview }) => {
+  const port = configuredPort(
+    process.env.VIDAA_PORT,
+    isPreview ? 80 : 4173
+  );
+
+  return {
+    root: PROBE_ROOT,
+    base: './',
+    plugins: [
+      react(),
+      vidaaJellyfinBridgePlugin(),
+      probeServerPlugin()
+    ],
+    server: {
+      allowedHosts: lanHostnameAliases(),
+      cors: true,
+      host: '0.0.0.0',
+      port,
+      strictPort: true
+    },
+    preview: {
+      allowedHosts: lanHostnameAliases(),
+      cors: true,
+      host: '0.0.0.0',
+      port,
+      strictPort: true
+    },
+    build: {
+      outDir: 'dist',
+      emptyOutDir: true,
+      target: 'es2018'
+    }
+  };
 });

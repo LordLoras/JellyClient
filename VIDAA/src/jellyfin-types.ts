@@ -87,6 +87,8 @@ export interface VidaaPlaybackPlan {
   subtitleUrl: string | null;
   subtitleLanguage: string | null;
   subtitleLabel: string | null;
+  audioStreamIndex: number | null;
+  subtitleStreamIndex: number | null;
   playSessionId: string;
   mediaSourceId: string;
   playMethod: VidaaPlayMethod;

@@ -1,4 +1,4 @@
-# JellyClient Windows alpha test matrix
+# JellyClient Windows test matrix
 
 Status: initial acceptance matrix
 Date: 2026-07-30
@@ -36,7 +36,7 @@ values above are the reference, not hard-coded capability declarations.
   support bundles.
 - Tests marked `Gate A` must pass before building the full library UI.
 - Tests marked `Gate B` must pass before enabling SyncPlay by default.
-- Tests marked `Later` are not Windows alpha blockers.
+- Tests marked `Later` are not current release blockers.
 
 ## 3. Test media manifest
 
@@ -102,7 +102,7 @@ hwdec=auto-safe
 
 Candidate A is preferred if color signaling, frame pacing, and hardware decode
 are correct. Candidate B is a controlled fallback, not a user-facing choice in
-the first alpha.
+the first release.
 
 Do not initially force the TV's advertised marketing peak brightness. Use
 detected/calibrated display information and MPV automatic target behavior.
@@ -159,7 +159,7 @@ is selected.
 | HDR-12 | HDR subtitle overlay | ASS and PGS | Subtitle white level is readable and does not destroy highlight detail | A |
 | HDR-13 | HDR10 AV1 | AV1 Main10 | Hardware decode if supported; otherwise documented fallback | Optional |
 | HDR-14 | HLG | HLG/BT.2020 | Correctly identified and rendered or tone-mapped | Later |
-| HDR-15 | Dolby Vision over Windows HDMI | DV | Explicitly outside Windows alpha; no false capability claim | Later |
+| HDR-15 | Dolby Vision over Windows HDMI | DV | Explicitly outside the current Windows scope; no false capability claim | Later |
 
 Initial measurable thresholds:
 
@@ -188,7 +188,7 @@ Initial measurable thresholds:
 
 ## 9. Audio-track tests
 
-The alpha decodes to PC speakers. Passthrough is disabled even if the source
+The Windows client decodes to PC speakers. Passthrough is disabled even if the source
 codec and TV advertise it.
 
 | ID | Test | Expected result | Gate |
@@ -200,7 +200,7 @@ codec and TV advertise it.
 | AUD-05 | DTS/TrueHD track | Local decode/downmix succeeds when bundled MPV supports it; otherwise explicit fallback | A |
 | AUD-06 | Seek after audio switch | Selected track persists and remains synchronized | A |
 | AUD-07 | Next episode | Preference rule is applied without confusing Jellyfin and MPV track IDs | A |
-| AUD-08 | HDMI passthrough | Not exposed in alpha settings | Later |
+| AUD-08 | HDMI passthrough | Not exposed in current settings | Later |
 
 ## 10. Jellyfin playback tests
 
@@ -225,7 +225,7 @@ codec and TV advertise it.
 
 Use at least:
 
-- Client A: JellyClient Windows alpha with MPV.
+- Client A: JellyClient Windows with MPV.
 - Client B: Jellyfin Web in a separate browser/profile or a second machine.
 - Optional Client C: second JellyClient instance with a unique device ID.
 

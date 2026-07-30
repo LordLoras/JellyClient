@@ -28,6 +28,7 @@ import {
   collectDecodingCapabilities,
   userAgentSummary
 } from './capabilities.js';
+import { pcUrl } from './bridge-url.js';
 import { moveSpatialFocus } from './spatial-focus.js';
 import type {
   CapabilityResult,
@@ -130,6 +131,7 @@ function sourceTone(expected: PlaybackProbeSource['expected']): string {
 }
 
 export function ProbeApp() {
+  const setupUrl = pcUrl('/setup');
   const videoRef = useRef<HTMLVideoElement>(null);
   const nextEventId = useRef(1);
   const [payload, setPayload] = useState<PublicProbePayload | null>(null);
@@ -463,7 +465,7 @@ export function ProbeApp() {
               <div className="video-empty">
                 <ListVideo />
                 <p>Choose a configured source below</p>
-                <span>PC setup: <b>http://localhost:4173/setup</b></span>
+                <span>PC setup: <b>{setupUrl}</b></span>
               </div>
             )}
             {activeSource && (
@@ -641,7 +643,7 @@ export function ProbeApp() {
               <div>
                 <small>NO SOURCES YET</small>
                 <strong>Open setup on the PC</strong>
-                <em>localhost:4173/setup</em>
+                <em>{setupUrl}</em>
               </div>
               <ChevronRight />
             </a>

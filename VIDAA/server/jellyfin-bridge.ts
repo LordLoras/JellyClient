@@ -26,7 +26,7 @@ import type {
 const VIDAA_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const DEFAULT_SESSION_PATH = resolve(VIDAA_ROOT, 'jellyfin.local.json');
 const CLIENT_NAME = 'JellyClient VIDAA';
-const CLIENT_VERSION = '0.1.7';
+const CLIENT_VERSION = '0.2.0';
 const TICKS_PER_SECOND = 10_000_000;
 const TEXT_SUBTITLE_CODECS = new Set([
   'ass',
@@ -472,7 +472,10 @@ async function playbackOptions(
     container: source.Container ?? null,
     audioTracks,
     subtitleTracks,
-    defaultAudioIndex: preferredEnglish(audioTracks) ?? source.DefaultAudioStreamIndex ?? null,
+    defaultAudioIndex: source.DefaultAudioStreamIndex ??
+      audioTracks.find((track) => track.isDefault)?.index ??
+      audioTracks[0]?.index ??
+      null,
     defaultSubtitleIndex: preferredEnglish(textEnglish)
   };
 }
@@ -647,6 +650,8 @@ async function planPlayback(
     subtitleUrl,
     subtitleLanguage: selectedSubtitle?.language ?? null,
     subtitleLabel: selectedSubtitle?.title ?? null,
+    audioStreamIndex: input.audioStreamIndex,
+    subtitleStreamIndex: selectedSubtitle?.index ?? null,
     playSessionId,
     mediaSourceId: source.Id,
     playMethod: effectiveMethod,

@@ -1,111 +1,245 @@
 # JellyClient for VIDAA
 
-This folder contains the VIDAA television client and its PC-hosted Jellyfin
-bridge. The TV interface uses VIDAA's native video element while the PC keeps
-the Jellyfin session and proxies authenticated artwork and streams. This lets
-the television select its SDR, HDR10, or Dolby Vision playback pipeline.
+JellyClient for VIDAA is a television interface for Jellyfin. The page runs in
+the VIDAA browser, while the TV's native video element performs playback. A
+companion server on the PC hosts the built interface and securely adds the
+Jellyfin credentials that the TV does not store.
 
-## Signal probe
-## Connect Jellyfin
+## What it supports
 
-Start the development server from the repository root:
+- Continue Watching, Up Next, recently added titles, and library summaries.
+- Audio and text-subtitle selection before playback.
+- In-player audio and subtitle switching.
+- Persistent preferred track and subtitle appearance settings.
+- Remote-friendly play, pause, seek, stop, and auto-hiding controls.
+- MP4 direct play and progressive MP4 video-copy remuxing for compatible MKV
+  sources.
+- Native SDR, HDR10, and Dolby Vision output when supported by the television
+  and source.
+- A timed WebVTT subtitle overlay independent of VIDAA's native `<track>`
+  implementation.
+- Protection against unnoticed HDR or Dolby Vision video transcoding.
+- A separate signal probe for validating TV playback modes with known media.
 
-```powershell
-pnpm vidaa:probe
-```
+Bitmap PGS subtitle rendering and VIDAA SyncPlay are not available yet.
 
-On the PC, open `http://localhost:4173/connect` and sign in. The password is
-used only for authentication and is not saved. The resulting Jellyfin access
-token is kept in the Git-ignored `VIDAA/jellyfin.local.json` file.
+## Requirements
 
-Open `http://<PC-LAN-IP>:4173/` on the TV. If the VIDAA browser does not accept
-a nonstandard port, build and serve the client on ordinary HTTP port 80:
+- A current Jellyfin server.
+- A Windows PC with Node.js and pnpm.
+- The PC and television on the same trusted local network.
+- Windows Firewall permission for Node.js on private networks.
 
-```powershell
-pnpm vidaa:probe:tv
-```
+Audio is decoded and output by the television. Use the TV speakers or an audio
+system connected to the TV; the PC speakers are not part of the VIDAA playback
+path.
 
-Then open `http://<PC-LAN-IP>/` on the TV. The client provides Continue
-Watching, Up Next, recently added items, audio-track selection, English text
-subtitles, and native playback. Bitmap PGS overlay and VIDAA SyncPlay remain
-separate implementation work.
-
+## Start the release build
 
 From the repository root:
 
 ```powershell
-pnpm vidaa:probe
+pnpm install
+pnpm vidaa:serve
 ```
 
-Open the PC setup page:
+`vidaa:serve` performs a clean, minified build into `VIDAA/dist`, then starts
+the local release server. It does not use source hot reloading.
+
+The default release port is 80. On the PC, open:
 
 ```text
-http://localhost:4173/setup
+http://localhost/connect
 ```
 
-Add PC-local media paths or direct HTTP media URLs and save. The setup page
-shows the LAN address to open in the VIDAA browser.
+Enter the Jellyfin server URL and credentials. The page displays one or more
+LAN addresses such as:
 
-If the TV browser does not connect to a nonstandard port, use ordinary HTTP
-port 80:
+```text
+http://192.168.1.20/
+```
+
+Open the displayed address in the television browser. Bookmark it on the TV if
+the firmware supports bookmarks.
+
+The password is used for the sign-in request and is not saved. The resulting
+Jellyfin access token is stored on the PC in `VIDAA/jellyfin.local.json`. That
+file is excluded from Git.
+
+### Start an existing build
+
+If `VIDAA/dist` has already been built:
 
 ```powershell
-pnpm vidaa:probe:tv
+pnpm vidaa:start
 ```
 
-Then open `http://<PC-LAN-IP>/` on the television. The server also accepts a
-matching `sslip.io` hostname alias when the TV handles hostnames more reliably
-than raw IP addresses.
+Run `pnpm vidaa:serve` again after pulling code changes so the output is
+rebuilt before it is served.
 
-## Recommended test reel
+## Change the port
 
-1. SDR H.264 or HEVC in MP4.
-2. HDR10 HEVC Main 10 in MP4.
+If port 80 is occupied or unavailable, set `VIDAA_PORT` before starting the
+server. For example, to use port 8090 in PowerShell:
 
-The probe routes remain available at `/probe` and `/setup`. JavaScript codec
-detection alone does not prove HDR or Dolby Vision output. A test passes only
-when playback is stable and the television enters the expected picture mode.
+```powershell
+$env:VIDAA_PORT = '8090'
+pnpm vidaa:serve
+```
+
+Then use:
+
+```text
+PC connection page: http://localhost:8090/connect
+TV client:          http://<PC-LAN-IP>:8090/
+```
+
+`VIDAA_PORT` accepts an available whole-numbered TCP port from 1 through 65535.
+Strict port binding is enabled, so startup reports an error instead of silently
+moving to another port.
+
+To remove the override from the current PowerShell session:
+
+```powershell
+Remove-Item Env:VIDAA_PORT
+```
+
+If Windows Firewall asks whether Node.js may accept connections, allow it on
+private networks. A custom port may also need a matching inbound firewall rule.
+
+## Connect Jellyfin
+
+The `/connect` page is intentionally writable only from the PC itself. Other
+devices may open the interface, artwork, subtitle, and media endpoints only
+after the PC has established the Jellyfin session.
+
+The server URL may include:
+
+- `http://` or `https://`
+- a hostname or IP address
+- a non-default Jellyfin port
+- a Jellyfin base path such as `/jellyfin`
+
+After connecting, leave the PC server process running while using the TV
+client.
+
+## Playback and track controls
+
+Selecting a title first opens the audio and subtitle choices. During playback,
+choose **Audio & subtitles** in the control bar:
+
+- Text subtitle changes apply immediately and do not restart the video.
+- Audio changes ask Jellyfin for a new stream and resume at the current
+  position.
+- Bitmap PGS tracks are shown but disabled.
+- **Subtitle appearance** opens the same settings available from the home page.
+
+The home-page **Settings** menu stores the following preferences in the
+television browser:
+
+- preferred audio and subtitle language
+- whether subtitles start enabled
+- subtitle size, color, background, and vertical position
+- remote seek interval
+- control auto-hide timeout
+
+These settings remain on that television/browser profile. They are not written
+to the Jellyfin server or the PC credential file.
 
 ## Playback policy
 
-The Jellyfin profile advertises MP4 H.264/HEVC direct play and progressive MP4
-remuxing. HDR and Dolby Vision playback is stopped if Jellyfin selects video
-transcoding, preventing an unnoticed switch to tone-mapped SDR. Audio may be
-copied or converted to a format accepted by the television.
+The Jellyfin device profile advertises MP4 H.264 and HEVC direct playback.
+Compatible MKV sources are requested as progressive MP4 remuxes with the
+original video copied unchanged. Audio may be copied or converted to a format
+accepted by the television.
+
+If Jellyfin reports that HDR or Dolby Vision video must be encoded, playback is
+stopped instead of silently producing tone-mapped SDR or discarding Dolby
+Vision metadata.
+
+Text, ASS, SSA, SubRip, MOV_TEXT, and WebVTT subtitle tracks are requested from
+Jellyfin as WebVTT and rendered above the native video.
+
+Actual codec, profile, container, and audio compatibility still depends on the
+television firmware. A Dolby Vision logo or picture-mode change reported by the
+TV is stronger evidence than JavaScript codec detection.
+
+## Tested television
+
+Native playback has been exercised on:
+
+- Hisense 55UR8S RGB MiniLED
+- VIDAA software `v01.09.60V.Q0618`
+
+Testing on that television confirmed distinct SDR output, HDR10/PQ mode
+activation, and Dolby Vision mode activation for compatible source files.
+Behavior on other Hisense models and VIDAA firmware versions may differ.
+
+## Signal probe
+
+The signal probe is useful before connecting a full library or when validating
+a firmware update.
+
+On the PC, open:
+
+```text
+http://localhost:<PORT>/setup
+```
+
+Add PC-local media paths or direct HTTP media URLs, save, and then open
+`/probe` on the TV. A useful test set contains:
+
+1. SDR H.264 or HEVC in MP4.
+2. HDR10 HEVC Main 10 in MP4.
 3. HDR10 HEVC Main 10 in MKV.
 4. Dolby Vision Profile 5 in MP4.
 5. Dolby Vision Profile 8.1 in MP4.
 6. Dolby Vision Profile 8.1 in MKV.
 
-Use local media that may legally be used for testing. Do not commit media files
-or authenticated Jellyfin stream URLs.
+The setup page writes `VIDAA/probe-media.local.json`. Optional short media
+samples may be kept in `VIDAA/test-media.local`. Both locations are excluded
+from Git.
 
-## Local configuration
+## Development
 
-The setup page writes `probe-media.local.json` in this folder. It is excluded
-from Git and contains any configured PC paths or URLs.
+Start the live development server on port 4173:
 
-Short remuxed controls can be stored in `test-media.local`. That directory is
-also excluded from Git.
+```powershell
+pnpm vidaa:probe
+```
 
-Configuration changes are accepted only from the PC loopback interface.
-LAN devices can read the redacted source list and stream only the explicitly
-configured files. Local file responses support HTTP byte-range requests needed
-for seeking and large media.
+The `VIDAA_PORT` override also works in development.
 
-To keep separate configurations, set `VIDAA_PROBE_CONFIG_PATH` before starting
-the server.
-
-## Production build
+Build and test:
 
 ```powershell
 pnpm vidaa:build
-pnpm vidaa:preview
-
-The Jellyfin connection page is also restricted to PC loopback. While the
-bridge is running, devices on the local network can use its library and media
-endpoints, so run it only on a trusted LAN.
+pnpm test
 ```
 
-The application is written to `VIDAA/dist`. The preview command retains the
-Jellyfin bridge, local probe configuration, and byte-range media endpoints.
+Available routes:
+
+- `/` — Jellyfin TV home and player.
+- `/connect` — PC-only Jellyfin connection.
+- `/probe` — playback signal probe.
+- `/setup` — PC-only signal-probe configuration.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the bridge, authentication,
+playback, and subtitle flow.
+
+## Security
+
+Use the release server only on a trusted local network. It is not an
+Internet-facing deployment and does not provide TLS, user isolation, or
+rate-limiting.
+
+Jellyfin connection changes and signal-probe configuration are accepted only
+from the PC loopback interface. While the server runs, LAN devices can access
+the authenticated library and media proxy endpoints.
+
+Do not commit:
+
+- `VIDAA/jellyfin.local.json`
+- `VIDAA/probe-media.local.json`
+- local media samples
+- authenticated Jellyfin URLs
