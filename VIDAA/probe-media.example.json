@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "firmware": "v01.09.60V.Q0618",
+  "sources": [
+    {
+      "id": "sdr-baseline",
+      "label": "SDR baseline",
+      "expected": "SDR",
+      "kind": "file",
+      "location": "C:\\Media\\sdr-baseline.mp4",
+      "notes": "H.264 or HEVC BT.709 reference"
+    },
+    {
+      "id": "hdr10-main10",
+      "label": "HDR10 · HEVC Main 10",
+      "expected": "HDR10",
+      "kind": "file",
+      "location": "C:\\Media\\hdr10-main10.mkv",
+      "notes": "BT.2020 with SMPTE ST 2084/PQ"
+    },
+    {
+      "id": "dolby-vision-p5",
+      "label": "Dolby Vision · Profile 5",
+      "expected": "Dolby Vision P5",
+      "kind": "file",
+      "location": "C:\\Media\\dolby-vision-profile-5.mp4",
+      "notes": "No HDR10 fallback; incorrect colors count as failure"
+    },
+    {
+      "id": "dolby-vision-p81",
+      "label": "Dolby Vision · Profile 8.1",
+      "expected": "Dolby Vision P8.1",
+      "kind": "file",
+      "location": "C:\\Media\\dolby-vision-profile-8-1.mp4",
+      "notes": "Confirm Dolby Vision rather than HDR10 fallback"
+    }
+  ]
+}
