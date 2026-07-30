@@ -22,6 +22,7 @@ import {
   defineConfig,
   type Plugin
 } from 'vite';
+import { vidaaJellyfinBridgePlugin } from './server/jellyfin-bridge.js';
 import type {
   ExpectedSignal,
   ProbeConfig,
@@ -524,16 +525,19 @@ export default defineConfig({
   base: './',
   plugins: [
     react(),
+    vidaaJellyfinBridgePlugin(),
     probeServerPlugin()
   ],
   server: {
     allowedHosts: lanHostnameAliases(),
+    cors: true,
     host: '0.0.0.0',
     port: 4173,
     strictPort: true
   },
   preview: {
     allowedHosts: lanHostnameAliases(),
+    cors: true,
     host: '0.0.0.0',
     port: 4173,
     strictPort: true

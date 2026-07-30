@@ -15,3 +15,4 @@ test-results/
 jellyclient.config.local.json
 VIDAA/probe-media.local.json
 VIDAA/test-media.local/
+VIDAA/jellyfin.local.json

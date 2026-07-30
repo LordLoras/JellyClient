@@ -85,7 +85,9 @@ See [Configuration](docs/CONFIGURATION.md) and
 
 Development is focused on dependable Windows playback, observable HDR and
 tone-mapping decisions, broad subtitle support, and low-friction SyncPlay.
-Longer-term goals include a native VIDAA client for platform-native Dolby
-Vision playback, optional HDMI audio bitstream passthrough, bundled-player
-distribution, and broader Jellyfin features such as Quick Connect, multiple
+
+The [VIDAA client](VIDAA/README.md) uses the television's native video pipeline
+for HDR10 and Dolby Vision, with a PC-hosted Jellyfin bridge for authenticated
+library and media access. Other project goals include optional HDMI audio
+bitstream passthrough, bundled-player distribution, Quick Connect, multiple
 saved servers, Live TV, downloads, and music.
