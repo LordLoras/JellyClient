@@ -28,9 +28,8 @@ selection, and first-class SyncPlay without a browser or cast handoff.
 - A live signal inspector that separates Jellyfin transport, MPV's decoded
   input, display-target color parameters, tone mapping, GPU/VO state, audio
   output, dropped frames, and cache health.
-- Netflix-style source badges for resolution, HDR format, and audio layout
-  when Jellyfin supplies the corresponding media metadata.
-- A copyable, credential-free debug report and MPV's native statistics overlay.
+- Resolution, HDR format, and audio-layout labels from Jellyfin media metadata.
+- Playback diagnostics with a redacted report and MPV statistics overlay.
 
 ## Requirements
 
