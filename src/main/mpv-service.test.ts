@@ -235,4 +235,30 @@ describe('MPV lifecycle events', () => {
       'MPV cannot seek before a media file is loaded.'
     );
   });
+
+  it('turns fullscreen keyboard controls into application requests', () => {
+    const service = new MpvService(
+      { settings: structuredClone(defaultSettings) } as never,
+      { emitClient: vi.fn() } as never
+    );
+    const internal = service as unknown as {
+      onMessage(message: Record<string, unknown>): void;
+    };
+    const toggle = vi.fn();
+    const seek = vi.fn();
+    service.on('toggle-pause-requested', toggle);
+    service.on('relative-seek-requested', seek);
+
+    internal.onMessage({
+      event: 'client-message',
+      args: ['jellyclient-toggle-pause']
+    });
+    internal.onMessage({
+      event: 'client-message',
+      args: ['jellyclient-relative-seek', '-5']
+    });
+
+    expect(toggle).toHaveBeenCalledOnce();
+    expect(seek).toHaveBeenCalledWith(-5);
+  });
 });

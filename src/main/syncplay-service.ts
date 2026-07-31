@@ -59,6 +59,11 @@ export class SyncPlayService {
     playlistItemId: string;
     sentAtMs: number;
   } | null = null;
+  private lastObservedPaused = true;
+  private nativeSeekTimer: NodeJS.Timeout | null = null;
+  private suppressNativePauseUntil = 0;
+  private suppressNativeSeekUntil = 0;
+  private suppressedPauseValue: boolean | null = null;
 
   constructor(
     jellyfin: JellyfinService,
@@ -74,6 +79,7 @@ export class SyncPlayService {
     this.mpv = mpv;
     this.config = config;
     this.events = events;
+    this.lastObservedPaused = mpv.state.paused;
 
     socket.on('SyncPlayGroupUpdate', (data) => {
       void this.processGroupUpdate(data as GroupUpdateMessage);
@@ -96,8 +102,14 @@ export class SyncPlayService {
         void this.sendReady();
       }
     });
+    mpv.on('seek', () => this.queueNativeSeekRelay());
     mpv.on('state', () => {
+      const playback = this.mpv.state;
+      const paused = playback.paused;
+      const pauseChanged = paused !== this.lastObservedPaused;
+      this.lastObservedPaused = paused;
       void this.onPlayerState();
+      if (pauseChanged) this.queueNativePauseRelay(paused);
     });
   }
 
@@ -272,6 +284,7 @@ export class SyncPlayService {
         await api.syncPlayUnpause();
         break;
       case 'pause':
+        this.suppressNativeControlRelay('pause', 750, true);
         await this.playback.pauseLocal();
         await api.syncPlayPause();
         break;
@@ -297,6 +310,7 @@ export class SyncPlayService {
     this.lastCommandEmittedAtMs = 0;
     this.lastCommandKey = null;
     this.lastReadyRequest = null;
+    this.clearNativeControlRelays();
     this.setState(structuredClone(initialSyncPlayState));
   }
 
@@ -521,6 +535,7 @@ export class SyncPlayService {
         } = this.config.settings.syncPlay;
         if (Math.abs(driftMs) >= hardSeekThresholdMs) {
           await this.resetPlaybackSpeed();
+          this.suppressNativeControlRelay('seek');
           await this.playback.seekLocal(targetSeconds);
         } else if (Math.abs(driftMs) >= softCorrectionThresholdMs) {
           const correctionRate = 0.03;
@@ -534,22 +549,27 @@ export class SyncPlayService {
         } else {
           await this.resetPlaybackSpeed();
         }
+        this.suppressNativeControlRelay('pause', 750, false);
         await this.playback.playLocal();
         break;
       }
       case 'Pause':
         await this.resetPlaybackSpeed();
+        this.suppressNativeControlRelay('pause', 750, true);
         await this.playback.pauseLocal();
+        this.suppressNativeControlRelay('seek');
         await this.playback.seekLocal(scheduledPosition / TICKS_PER_SECOND);
         break;
       case 'Seek':
         await this.resetPlaybackSpeed();
+        this.suppressNativeControlRelay('seek');
         await this.playback.seekLocal(scheduledPosition / TICKS_PER_SECOND);
         await this.waitForPlayerRestart();
         await this.sendReady();
         break;
       case 'Stop':
         await this.resetPlaybackSpeed();
+        this.suppressNativeControlRelay('both', 750, true);
         await this.playback.stopLocal();
         break;
     }
@@ -717,6 +737,7 @@ export class SyncPlayService {
     this.lastCommandEmittedAtMs = 0;
     this.lastCommandKey = null;
     this.lastReadyRequest = null;
+    this.clearNativeControlRelays();
     this.setState({
       ...this.stateValue,
       membership: 'not-joined',
@@ -789,6 +810,104 @@ export class SyncPlayService {
   private commandTime(command: SendCommand): number {
     const value = Date.parse(command.EmittedAt ?? command.When ?? '');
     return Number.isFinite(value) ? value : 0;
+  }
+
+  private queueNativePauseRelay(paused: boolean): void {
+    if (!this.canBeginNativeControlRelay('pause', paused)) return;
+    void this.relayNativeControl(async () => {
+      const api = getSyncPlayApi(this.jellyfin.api);
+      if (paused) await api.syncPlayPause();
+      else await api.syncPlayUnpause();
+    }, paused ? 'pause' : 'play');
+  }
+
+  private queueNativeSeekRelay(): void {
+    if (!this.canBeginNativeControlRelay('seek')) return;
+    if (this.nativeSeekTimer) clearTimeout(this.nativeSeekTimer);
+    this.nativeSeekTimer = setTimeout(() => {
+      this.nativeSeekTimer = null;
+      if (!this.canFinishNativeControlRelay('seek')) return;
+      const positionTicks = Math.round(
+        this.mpv.state.positionSeconds * TICKS_PER_SECOND
+      );
+      void this.relayNativeControl(async () => {
+        await getSyncPlayApi(this.jellyfin.api).syncPlaySeek({
+          seekRequestDto: { PositionTicks: positionTicks }
+        });
+      }, 'seek');
+    }, 100);
+  }
+
+  private canBeginNativeControlRelay(
+    type: 'pause' | 'seek',
+    paused?: boolean
+  ): boolean {
+    return this.canFinishNativeControlRelay(type, paused) && (
+      type === 'seek' || this.stateValue.currentGroup?.state !== 'Waiting'
+    );
+  }
+
+  private canFinishNativeControlRelay(
+    type: 'pause' | 'seek',
+    paused?: boolean
+  ): boolean {
+    const suppressedUntil = type === 'pause'
+      ? this.suppressNativePauseUntil
+      : this.suppressNativeSeekUntil;
+    const suppressionApplies = type === 'seek' ||
+      paused === this.suppressedPauseValue;
+    return this.stateValue.membership === 'joined' &&
+      Boolean(this.stateValue.playlistItemId) &&
+      this.mpv.isMediaLoaded &&
+      (Date.now() >= suppressedUntil || !suppressionApplies);
+  }
+
+  private async relayNativeControl(
+    operation: () => Promise<void>,
+    label: string
+  ): Promise<void> {
+    try {
+      await this.socket.waitUntilConnected();
+      await operation();
+    } catch (error) {
+      this.events.emitClient({
+        type: 'notice',
+        data: {
+          level: 'error',
+          message: `Could not send MPV ${label} to SyncPlay: ${userFacingError(error, 'Unknown error')}`
+        }
+      });
+    }
+  }
+
+  private suppressNativeControlRelay(
+    type: 'pause' | 'seek' | 'both',
+    durationMs = 750,
+    pauseValue: boolean | null = null
+  ): void {
+    const until = Date.now() + durationMs;
+    if (type === 'pause' || type === 'both') {
+      this.suppressNativePauseUntil = Math.max(
+        this.suppressNativePauseUntil,
+        until
+      );
+      this.suppressedPauseValue = pauseValue;
+    }
+    if (type === 'seek' || type === 'both') {
+      this.suppressNativeSeekUntil = Math.max(
+        this.suppressNativeSeekUntil,
+        until
+      );
+    }
+  }
+
+  private clearNativeControlRelays(): void {
+    if (this.nativeSeekTimer) clearTimeout(this.nativeSeekTimer);
+    this.nativeSeekTimer = null;
+    this.suppressNativePauseUntil = 0;
+    this.suppressNativeSeekUntil = 0;
+    this.suppressedPauseValue = null;
+    this.lastObservedPaused = this.mpv.state.paused;
   }
 
   private serialize<T>(operation: () => Promise<T>): Promise<T> {

@@ -69,6 +69,11 @@ export interface SegmentSkipRequest {
   targetSeconds: number;
 }
 
+export type PlayerControlRequest =
+  | { type: 'play' }
+  | { type: 'pause' }
+  | { type: 'seek'; positionSeconds: number };
+
 export class PlaybackService extends EventEmitter {
   private readonly jellyfin: JellyfinService;
   private readonly mpv: MpvService;
@@ -96,6 +101,20 @@ export class PlaybackService extends EventEmitter {
       this.handleEndFile(event);
     });
     this.mpv.on('skip-segment', () => this.requestSegmentSkip());
+    this.mpv.on('toggle-pause-requested', () => {
+      this.emit('control-requested', {
+        type: this.mpv.state.paused ? 'play' : 'pause'
+      } satisfies PlayerControlRequest);
+    });
+    this.mpv.on('relative-seek-requested', (offsetSeconds: number) => {
+      this.emit('control-requested', {
+        type: 'seek',
+        positionSeconds: Math.max(
+          0,
+          this.mpv.state.positionSeconds + offsetSeconds
+        )
+      } satisfies PlayerControlRequest);
+    });
     this.mpv.on('chapter-step', (step: number) => {
       void this.stepChapter(step).catch(() => undefined);
     });

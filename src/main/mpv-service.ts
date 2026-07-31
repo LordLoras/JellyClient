@@ -601,6 +601,11 @@ export class MpvService extends EventEmitter {
         'define-section',
         'jellyclient-controls',
         [
+          'SPACE script-message jellyclient-toggle-pause',
+          'p script-message jellyclient-toggle-pause',
+          'P script-message jellyclient-toggle-pause',
+          'LEFT script-message jellyclient-relative-seek -5',
+          'RIGHT script-message jellyclient-relative-seek 5',
           'a cycle audio',
           'A cycle audio',
           's cycle sub',
@@ -783,6 +788,23 @@ export class MpvService extends EventEmitter {
       message.args?.[0] === 'jellyclient-skip'
     ) {
       this.emit('skip-segment');
+      return;
+    }
+    if (
+      message.event === 'client-message' &&
+      message.args?.[0] === 'jellyclient-toggle-pause'
+    ) {
+      this.emit('toggle-pause-requested');
+      return;
+    }
+    if (
+      message.event === 'client-message' &&
+      message.args?.[0] === 'jellyclient-relative-seek'
+    ) {
+      const offsetSeconds = Number(message.args[1]);
+      if (Number.isFinite(offsetSeconds) && offsetSeconds !== 0) {
+        this.emit('relative-seek-requested', offsetSeconds);
+      }
       return;
     }
     if (

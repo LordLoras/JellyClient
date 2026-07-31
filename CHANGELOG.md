@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.1 — 2026-07-31
+
+- Route seek and pause actions made inside the MPV window through an active
+  Jellyfin SyncPlay room.
+- Add fullscreen MPV shortcuts for synchronized pause and five-second seeking:
+  `Space` or `P` pauses and resumes, while `Left` and `Right` seek.
+- Detect MPV OSC seek and pause changes and relay them to the room.
+- Suppress local MPV events produced by incoming SyncPlay commands so they are
+  not echoed back to Jellyfin.
+
 ## 1.0.0 — 2026-07-31
 
 ### Windows

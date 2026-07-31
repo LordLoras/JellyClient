@@ -60,6 +60,8 @@ library data and stream negotiation, then opens playback in MPV.
 - Create, join, and leave a Jellyfin SyncPlay group without casting through a
   separate browser session.
 - Coordinate play, pause, seek, buffering, media changes, and segment skips.
+- Relay pause and seek controls used inside the fullscreen MPV window through
+  the active group.
 - Correct small timing drift while retaining hard correction for larger drift.
 
 ## Playback information

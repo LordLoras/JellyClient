@@ -12,6 +12,7 @@ import { JellyfinService } from './jellyfin-service.js';
 import { MpvService } from './mpv-service.js';
 import {
   PlaybackService,
+  type PlayerControlRequest,
   type SegmentSkipRequest
 } from './playback-service.js';
 import { RemoteCommandService } from './remote-command-service.js';
@@ -122,6 +123,34 @@ if (!hasSingleInstanceLock) {
             message: error instanceof Error
               ? error.message
               : 'Could not skip the media segment.'
+          }
+        });
+      });
+    });
+    playback.on('control-requested', (request: PlayerControlRequest) => {
+      const joined = syncPlay.state.membership === 'joined';
+      const operation = request.type === 'seek'
+        ? joined
+          ? syncPlay.action({
+            type: 'seek',
+            positionTicks: Math.round(
+              request.positionSeconds * TICKS_PER_SECOND
+            )
+          })
+          : playback.seekLocal(request.positionSeconds)
+        : joined
+          ? syncPlay.action(request)
+          : request.type === 'play'
+            ? playback.playLocal()
+            : playback.pauseLocal();
+      void operation.catch((error: unknown) => {
+        events.emitClient({
+          type: 'notice',
+          data: {
+            level: 'error',
+            message: error instanceof Error
+              ? error.message
+              : 'Could not apply the MPV playback control.'
           }
         });
       });
