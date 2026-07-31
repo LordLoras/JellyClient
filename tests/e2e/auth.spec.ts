@@ -297,7 +297,7 @@ test('restores the encrypted session without asking for the password again', asy
 test('defaults automatic subtitles to English', async () => {
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(
-    page.getByRole('heading', { name: 'Subtitle preference' })
+    page.getByRole('heading', { name: 'Language preferences' })
   ).toBeVisible();
   await expect(
     page.getByRole('checkbox', {
