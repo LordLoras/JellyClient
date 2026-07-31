@@ -10,6 +10,11 @@ import { resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'vite';
+import {
+  coalesceSkipSegments,
+  validSkipSegment,
+  type SkipSegment
+} from '../../src/shared/skip-segments.js';
 import type {
   VidaaHomePayload,
   VidaaJellyfinSession,
@@ -97,6 +102,13 @@ interface RawMediaSource {
   DefaultAudioStreamIndex?: number | null;
   DefaultSubtitleStreamIndex?: number | null;
   MediaStreams?: RawMediaStream[];
+}
+
+interface RawMediaSegment {
+  Id?: string | null;
+  Type?: string | null;
+  StartTicks?: number | null;
+  EndTicks?: number | null;
 }
 
 interface RawItem {
@@ -480,6 +492,31 @@ async function playbackOptions(
   };
 }
 
+async function mediaSegments(
+  session: StoredSession,
+  itemId: string
+): Promise<SkipSegment[]> {
+  try {
+    const response = await jellyfinJson<{ Items?: RawMediaSegment[] }>(
+      session,
+      `/MediaSegments/${encodeURIComponent(itemId)}?includeSegmentTypes=Intro&includeSegmentTypes=Outro`
+    );
+    return coalesceSkipSegments(
+      (response.Items ?? []).flatMap((segment) => {
+        const normalized = validSkipSegment(
+          segment.Id,
+          segment.Type,
+          segment.StartTicks,
+          segment.EndTicks
+        );
+        return normalized ? [normalized] : [];
+      })
+    );
+  } catch {
+    return [];
+  }
+}
+
 function deviceProfile() {
   return {
     Name: 'JellyClient VIDAA native video',
@@ -557,7 +594,10 @@ async function planPlayback(
   itemId: string,
   input: VidaaPlaybackRequest
 ): Promise<VidaaPlaybackPlan> {
-  const options = await playbackOptions(session, itemId);
+  const [options, segments] = await Promise.all([
+    playbackOptions(session, itemId),
+    mediaSegments(session, itemId)
+  ]);
   const selectedSubtitle = options.subtitleTracks.find(
     (track) => track.index === input.subtitleStreamIndex
   );
@@ -652,6 +692,7 @@ async function planPlayback(
     subtitleLabel: selectedSubtitle?.title ?? null,
     audioStreamIndex: input.audioStreamIndex,
     subtitleStreamIndex: selectedSubtitle?.index ?? null,
+    segments,
     playSessionId,
     mediaSourceId: source.Id,
     playMethod: effectiveMethod,

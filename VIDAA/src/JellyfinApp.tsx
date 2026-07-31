@@ -53,6 +53,11 @@ import {
   subtitleAtTime,
   type WebVttCue
 } from './webvtt.js';
+import {
+  activeSkipSegment,
+  skipSegmentLabel,
+  type SkipSegment
+} from '../../src/shared/skip-segments.js';
 
 const TICKS_PER_SECOND = 10_000_000;
 
@@ -436,6 +441,7 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
   const startedRef = useRef(false);
   const stoppedRef = useRef(false);
   const controlsTimerRef = useRef<number | null>(null);
+  const activeSkipSegmentRef = useRef<SkipSegment | null>(null);
   const [paused, setPaused] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [position, setPosition] = useState(plan.startPositionSeconds);
@@ -448,6 +454,9 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
   const [subtitleUrl, setSubtitleUrl] = useState(plan.subtitleUrl);
   const [subtitleCues, setSubtitleCues] = useState<WebVttCue[]>([]);
   const [subtitleError, setSubtitleError] = useState<string | null>(null);
+  const [dismissedSegmentIds, setDismissedSegmentIds] = useState<Set<string>>(
+    () => new Set()
+  );
 
   planRef.current = plan;
 
@@ -508,12 +517,31 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
     onExit();
   }
 
+  function skipCurrentSegment() {
+    const video = videoRef.current;
+    const segment = activeSkipSegmentRef.current;
+    if (!video || !segment) return;
+    const targetSeconds = segment.endTicks / TICKS_PER_SECOND;
+    video.currentTime = Math.min(video.duration || Infinity, targetSeconds);
+    setPosition(targetSeconds);
+    setDismissedSegmentIds((current) => {
+      const next = new Set(current);
+      next.add(segment.id);
+      return next;
+    });
+    report('progress');
+  }
+
   useEffect(() => {
     setAudioIndex(plan.audioStreamIndex);
     setSubtitleIndex(plan.subtitleStreamIndex);
     setSubtitleUrl(plan.subtitleUrl);
     setError(null);
   }, [plan]);
+
+  useEffect(() => {
+    setDismissedSegmentIds(new Set());
+  }, [plan.item.id]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -549,7 +577,9 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
         }
         return;
       }
-      if (event.key === 'Escape' || event.keyCode === 413) stop();
+      if (event.key.toLowerCase() === 'n' && activeSkipSegmentRef.current) {
+        skipCurrentSegment();
+      } else if (event.key === 'Escape' || event.keyCode === 413) stop();
       else if (event.key === 'Enter' || event.key === ' ' || event.keyCode === 415 || event.keyCode === 19) {
         if (video.paused) void video.play(); else video.pause();
       } else if (event.key === 'ArrowLeft' || event.keyCode === 412) {
@@ -649,6 +679,12 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
     if (video) video.currentTime = Math.max(0, Math.min(video.duration || Infinity, video.currentTime + amount));
   };
   const activeSubtitle = subtitleAtTime(subtitleCues, position);
+  const activeSegment = activeSkipSegment(
+    plan.segments,
+    position,
+    dismissedSegmentIds
+  );
+  activeSkipSegmentRef.current = activeSegment;
   const playerClasses = [
     'native-player',
     controlsVisible || menu ? '' : 'native-player--controls-hidden',
@@ -700,6 +736,17 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
         >
           <span>{activeSubtitle}</span>
         </div>
+      )}
+      {activeSegment && !menu && (
+        <button
+          aria-label={`${skipSegmentLabel(activeSegment.type)}. Press N.`}
+          className="native-player__skip"
+          onClick={skipCurrentSegment}
+          type="button"
+        >
+          <span>{skipSegmentLabel(activeSegment.type)}</span>
+          <kbd>N</kbd>
+        </button>
       )}
       <div className="native-player__shade" />
       <header><div><p>{plan.item.seriesName ?? plan.item.type}</p><h1>{plan.item.name}</h1></div><button className="signal-button signal-button--quiet" data-focusable onClick={stop} type="button"><Square /> Stop</button></header>

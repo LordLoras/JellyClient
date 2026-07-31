@@ -1,11 +1,15 @@
+import { EventEmitter } from 'node:events';
 import { getMediaInfoApi } from '@jellyfin/sdk/lib/utils/api/media-info-api.js';
+import { getMediaSegmentsApi } from '@jellyfin/sdk/lib/utils/api/media-segments-api.js';
 import { getPlaystateApi } from '@jellyfin/sdk/lib/utils/api/playstate-api.js';
 import { DlnaProfileType } from '@jellyfin/sdk/lib/generated-client/models/dlna-profile-type.js';
 import { EncodingContext } from '@jellyfin/sdk/lib/generated-client/models/encoding-context.js';
 import type { MediaSourceInfo } from '@jellyfin/sdk/lib/generated-client/models/media-source-info.js';
+import type { MediaSegmentDto } from '@jellyfin/sdk/lib/generated-client/models/media-segment-dto.js';
 import type { MediaStream } from '@jellyfin/sdk/lib/generated-client/models/media-stream.js';
 import { MediaStreamProtocol } from '@jellyfin/sdk/lib/generated-client/models/media-stream-protocol.js';
 import { MediaStreamType } from '@jellyfin/sdk/lib/generated-client/models/media-stream-type.js';
+import { MediaSegmentType } from '@jellyfin/sdk/lib/generated-client/models/media-segment-type.js';
 import { PlayMethod } from '@jellyfin/sdk/lib/generated-client/models/play-method.js';
 import { SubtitleDeliveryMethod } from '@jellyfin/sdk/lib/generated-client/models/subtitle-delivery-method.js';
 import type {
@@ -17,6 +21,13 @@ import type {
 } from '@shared/contracts.js';
 import { TICKS_PER_SECOND } from '@shared/contracts.js';
 import { choosePreferredSubtitle } from '@shared/subtitle-selection.js';
+import {
+  activeSkipSegment,
+  coalesceSkipSegments,
+  skipSegmentLabel,
+  validSkipSegment,
+  type SkipSegment
+} from '@shared/skip-segments.js';
 import { ConfigService } from './config-service.js';
 import { JellyfinService } from './jellyfin-service.js';
 import {
@@ -35,9 +46,17 @@ interface ActivePlayback {
   initialAudioIndex: number | null;
   initialSubtitleIndex: number | null;
   playlistItemId: string | null;
+  segments: SkipSegment[];
+  dismissedSegmentIds: Set<string>;
+  promptSegmentId: string | null;
 }
 
-export class PlaybackService {
+export interface SegmentSkipRequest {
+  itemId: string;
+  targetSeconds: number;
+}
+
+export class PlaybackService extends EventEmitter {
   private readonly jellyfin: JellyfinService;
   private readonly mpv: MpvService;
   private readonly config: ConfigService;
@@ -50,18 +69,22 @@ export class PlaybackService {
     mpv: MpvService,
     config: ConfigService
   ) {
+    super();
     this.jellyfin = jellyfin;
     this.mpv = mpv;
     this.config = config;
     this.mpv.on('file-loaded', () => this.queueReport('start'));
     this.mpv.on('end-file', () => this.queueReport('stop'));
+    this.mpv.on('skip-segment', () => this.requestSegmentSkip());
     this.mpv.on('state', (state: PlaybackState) => {
+      this.updateSegmentPrompt(state);
       if (state.status === 'playing' || state.status === 'paused') {
         this.ensureReportTimer();
       }
     });
     this.jellyfin.on('disconnected', () => {
       this.clearReportTimer();
+      void this.mpv.setSkipPrompt(null).catch(() => undefined);
       this.active = null;
     });
   }
@@ -81,7 +104,10 @@ export class PlaybackService {
       await this.reportStopped(false);
     }
 
-    const item = await this.jellyfin.getItem(input.itemId);
+    const [item, segments] = await Promise.all([
+      this.jellyfin.getItem(input.itemId),
+      this.mediaSegments(input.itemId)
+    ]);
     const mediaInfoApi = getMediaInfoApi(this.jellyfin.api);
     const discovery = await mediaInfoApi.getPlaybackInfo({
       itemId: input.itemId,
@@ -154,7 +180,10 @@ export class PlaybackService {
         input.audioStreamIndex ?? source.DefaultAudioStreamIndex ?? null,
       initialSubtitleIndex:
         subtitleStreamIndex,
-      playlistItemId: options.playlistItemId ?? null
+      playlistItemId: options.playlistItemId ?? null,
+      segments,
+      dismissedSegmentIds: new Set<string>(),
+      promptSegmentId: null
     };
 
     const playerSettings = this.config.settings.player;
@@ -305,6 +334,7 @@ export class PlaybackService {
     if (!active || active.stopped) return;
     active.stopped = true;
     this.clearReportTimer();
+    void this.mpv.setSkipPrompt(null).catch(() => undefined);
     const state = this.mpv.state;
     try {
       await getPlaystateApi(this.jellyfin.api).reportPlaybackStopped({
@@ -344,6 +374,71 @@ export class PlaybackService {
     return type === 'audio'
       ? this.active?.initialAudioIndex ?? null
       : this.active?.initialSubtitleIndex ?? null;
+  }
+
+  private async mediaSegments(itemId: string): Promise<SkipSegment[]> {
+    try {
+      const response = await getMediaSegmentsApi(
+        this.jellyfin.api
+      ).getItemSegments({
+        itemId,
+        includeSegmentTypes: [
+          MediaSegmentType.Intro,
+          MediaSegmentType.Outro
+        ]
+      });
+      return coalesceSkipSegments(
+        (response.data.Items ?? []).flatMap((segment: MediaSegmentDto) => {
+          const normalized = validSkipSegment(
+            segment.Id,
+            segment.Type,
+            segment.StartTicks,
+            segment.EndTicks
+          );
+          return normalized ? [normalized] : [];
+        })
+      );
+    } catch {
+      // Playback remains available when the server has no segment provider.
+      return [];
+    }
+  }
+
+  private updateSegmentPrompt(state: PlaybackState): void {
+    const active = this.active;
+    const segment = active && !active.stopped && (
+      state.status === 'playing' ||
+      state.status === 'paused' ||
+      state.status === 'buffering'
+    )
+      ? activeSkipSegment(
+        active.segments,
+        state.positionSeconds,
+        active.dismissedSegmentIds
+      )
+      : null;
+    const segmentId = segment?.id ?? null;
+    if (!active || active.promptSegmentId === segmentId) return;
+    active.promptSegmentId = segmentId;
+    void this.mpv.setSkipPrompt(
+      segment ? skipSegmentLabel(segment.type) : null
+    ).catch(() => undefined);
+  }
+
+  private requestSegmentSkip(): void {
+    const active = this.active;
+    if (!active?.promptSegmentId || active.stopped) return;
+    const segment = active.segments.find(
+      (candidate) => candidate.id === active.promptSegmentId
+    );
+    if (!segment) return;
+    active.dismissedSegmentIds.add(segment.id);
+    active.promptSegmentId = null;
+    void this.mpv.setSkipPrompt(null).catch(() => undefined);
+    this.emit('segment-skip-requested', {
+      itemId: active.itemId,
+      targetSeconds: segment.endTicks / TICKS_PER_SECOND
+    } satisfies SegmentSkipRequest);
   }
 
   private selectMediaSource(

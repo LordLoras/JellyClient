@@ -1,3 +1,5 @@
+import type { SkipSegment } from '../../src/shared/skip-segments.js';
+
 export interface VidaaJellyfinSession {
   connected: boolean;
   baseUrl: string | null;
@@ -89,6 +91,7 @@ export interface VidaaPlaybackPlan {
   subtitleLabel: string | null;
   audioStreamIndex: number | null;
   subtitleStreamIndex: number | null;
+  segments: SkipSegment[];
   playSessionId: string;
   mediaSourceId: string;
   playMethod: VidaaPlayMethod;

@@ -4,12 +4,16 @@ import {
   BrowserWindow,
   protocol
 } from 'electron';
+import { TICKS_PER_SECOND } from '@shared/contracts.js';
 import { ConfigService } from './config-service.js';
 import { ClientEventBus } from './event-bus.js';
 import { registerIpc } from './ipc.js';
 import { JellyfinService } from './jellyfin-service.js';
 import { MpvService } from './mpv-service.js';
-import { PlaybackService } from './playback-service.js';
+import {
+  PlaybackService,
+  type SegmentSkipRequest
+} from './playback-service.js';
 import { RemoteCommandService } from './remote-command-service.js';
 import { SyncPlayService } from './syncplay-service.js';
 import { JellyfinWebSocketService } from './websocket-service.js';
@@ -100,6 +104,28 @@ if (!hasSingleInstanceLock) {
       config,
       events
     );
+    playback.on('segment-skip-requested', (request: SegmentSkipRequest) => {
+      if (playback.state.item?.id !== request.itemId) return;
+      const operation = syncPlay.state.membership === 'joined'
+        ? syncPlay.action({
+          type: 'seek',
+          positionTicks: Math.round(
+            request.targetSeconds * TICKS_PER_SECOND
+          )
+        })
+        : playback.seekLocal(request.targetSeconds);
+      void operation.catch((error: unknown) => {
+        events.emitClient({
+          type: 'notice',
+          data: {
+            level: 'error',
+            message: error instanceof Error
+              ? error.message
+              : 'Could not skip the media segment.'
+          }
+        });
+      });
+    });
     new RemoteCommandService(
       socket,
       playback,

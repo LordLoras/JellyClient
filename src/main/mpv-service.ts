@@ -22,6 +22,7 @@ import {
 import { ConfigService } from './config-service.js';
 import { ClientEventBus } from './event-bus.js';
 import { userFacingError } from './errors.js';
+import { skipPromptAss } from './mpv-skip-overlay.js';
 
 interface MpvMessage {
   request_id?: number;
@@ -30,6 +31,7 @@ interface MpvMessage {
   event?: string;
   name?: string;
   reason?: string;
+  args?: string[];
 }
 
 interface PendingCommand {
@@ -99,6 +101,7 @@ export class MpvService extends EventEmitter {
   };
   private intentionalShutdown = false;
   private pendingSubtitlePreference: MpvSubtitlePreference | null = null;
+  private skipPromptLabel: string | null = null;
 
   constructor(config: ConfigService, events: ClientEventBus) {
     super();
@@ -212,6 +215,7 @@ export class MpvService extends EventEmitter {
     });
 
     await this.ensureRunning(capability.executablePath);
+    await this.setSkipPrompt(null);
     await this.command([
       'set_property',
       'http-header-fields',
@@ -313,6 +317,38 @@ export class MpvService extends EventEmitter {
     await this.command(['set_property', 'speed', speed]);
   }
 
+  async setSkipPrompt(label: string | null): Promise<void> {
+    if (this.skipPromptLabel === label) return;
+    const previousLabel = this.skipPromptLabel;
+    this.skipPromptLabel = label;
+    try {
+      if (!this.socket || this.socket.destroyed) return;
+      if (label) {
+        await this.command([
+          'osd-overlay',
+          7_101,
+          'ass-events',
+          skipPromptAss(label),
+          1280,
+          720,
+          100
+        ]);
+        await this.command(['enable-section', 'jellyclient-skip']);
+        return;
+      }
+      await this.command(['disable-section', 'jellyclient-skip']);
+      await this.command([
+        'osd-overlay',
+        7_101,
+        'none',
+        ''
+      ]);
+    } catch (error) {
+      this.skipPromptLabel = previousLabel;
+      throw error;
+    }
+  }
+
   async shutdown(): Promise<void> {
     this.intentionalShutdown = true;
     try {
@@ -362,6 +398,12 @@ export class MpvService extends EventEmitter {
     for (const [index, property] of OBSERVED_PROPERTIES.entries()) {
       await this.command(['observe_property', index + 1, property]);
     }
+    await this.command([
+      'define-section',
+      'jellyclient-skip',
+      'n script-message jellyclient-skip\nN script-message jellyclient-skip',
+      'force'
+    ]);
   }
 
   private buildArguments(settings: AppSettings): string[] {
@@ -497,6 +539,14 @@ export class MpvService extends EventEmitter {
           pending.resolve(message.data);
         }
       }
+    }
+
+    if (
+      message.event === 'client-message' &&
+      message.args?.[0] === 'jellyclient-skip'
+    ) {
+      this.emit('skip-segment');
+      return;
     }
 
     if (message.event === 'property-change' && message.name) {
@@ -821,6 +871,7 @@ export class MpvService extends EventEmitter {
       pending.reject(new Error('MPV IPC disconnected.'));
     }
     this.pending.clear();
+    this.skipPromptLabel = null;
   }
 
   private async candidatePaths(overridePath?: string): Promise<string[]> {
