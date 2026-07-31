@@ -13,6 +13,9 @@ library data and stream negotiation, then opens playback in MPV.
 - Sort by title, date added, release date, year, rating, or runtime.
 - Mark an item watched or unwatched and add or remove it from favorites.
 - Open available trailers and special features.
+- Return through library, search, and settings history from the top bar,
+  `Alt+Left`, or a mouse back button.
+- Move through horizontal home sections with on-screen rail controls.
 
 ## Playback preparation
 
@@ -63,6 +66,8 @@ library data and stream negotiation, then opens playback in MPV.
 - Relay pause and seek controls used inside the fullscreen MPV window through
   the active group.
 - Correct small timing drift while retaining hard correction for larger drift.
+- Recover from slow MPV loads and superseded rapid commands without leaving
+  and rejoining the group.
 
 ## Playback information
 

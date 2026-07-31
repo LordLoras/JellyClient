@@ -26,6 +26,12 @@ export interface Notice {
   level: 'info' | 'warning' | 'error';
   message: string;
 }
+
+interface NavigationEntry {
+  view: MainView;
+  page: ItemsPage | null;
+}
+
 interface AppStore {
   bootstrap: AppBootstrap | null;
   connection: ConnectionState | null;
@@ -37,6 +43,7 @@ interface AppStore {
   page: ItemsPage | null;
   detail: ItemDetails | null;
   view: MainView;
+  navigationHistory: NavigationEntry[];
   busy: boolean;
   notices: Notice[];
   setBootstrap(value: AppBootstrap): void;
@@ -48,6 +55,8 @@ interface AppStore {
   setPage(value: ItemsPage | null): void;
   setDetail(value: ItemDetails | null): void;
   setView(value: MainView): void;
+  goBack(): boolean;
+  resetNavigation(): void;
   setBusy(value: boolean): void;
   addNotice(level: Notice['level'], message: string): void;
   dismissNotice(id: number): void;
@@ -66,6 +75,7 @@ export const useAppStore = create<AppStore>((set) => ({
   page: null,
   detail: null,
   view: { kind: 'home' },
+  navigationHistory: [],
   busy: false,
   notices: [],
   setBootstrap: (value) =>
@@ -95,7 +105,37 @@ export const useAppStore = create<AppStore>((set) => ({
   setHome: (value) => set({ home: value }),
   setPage: (value) => set({ page: value }),
   setDetail: (value) => set({ detail: value }),
-  setView: (value) => set({ view: value }),
+  setView: (value) =>
+    set((state) => {
+      if (sameView(state.view, value)) return {};
+      return {
+        view: value,
+        navigationHistory: [
+          ...state.navigationHistory.slice(-19),
+          { view: state.view, page: state.page }
+        ]
+      };
+    }),
+  goBack: () => {
+    let navigated = false;
+    set((state) => {
+      const previous = state.navigationHistory.at(-1);
+      if (!previous) return {};
+      navigated = true;
+      return {
+        view: previous.view,
+        page: previous.page,
+        navigationHistory: state.navigationHistory.slice(0, -1)
+      };
+    });
+    return navigated;
+  },
+  resetNavigation: () => set({
+    view: { kind: 'home' },
+    navigationHistory: [],
+    page: null,
+    detail: null
+  }),
   setBusy: (value) => set({ busy: value }),
   addNotice: (level, message) =>
     set((state) => ({
@@ -113,6 +153,17 @@ export const useAppStore = create<AppStore>((set) => ({
       notices: state.notices.filter((notice) => notice.id !== id)
     }))
 }));
+
+function sameView(left: MainView, right: MainView): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === 'library' && right.kind === 'library') {
+    return left.library.id === right.library.id;
+  }
+  if (left.kind === 'search' && right.kind === 'search') {
+    return left.query === right.query;
+  }
+  return true;
+}
 
 export function playableHero(home: HomePayload | null): MediaItem | null {
   return (

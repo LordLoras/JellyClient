@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.0 — 2026-08-01
+
+- Keep SyncPlay membership alive when MPV loads slowly, retry the latest room
+  command after playback becomes ready, and serialize rapid local controls.
+- Ignore superseded queue loads and accept distinct commands that share a
+  server timestamp.
+- Measure playback offset continuously after playback starts and perform a
+  follow-up hard correction when the initial start is late.
+- Add back navigation through the top bar, `Alt+Left`, and the mouse back
+  button, with modal-first behavior and restored catalog state.
+- Fix overlapping Continue Watching and Up Next cards, add horizontal rail
+  controls, and refine card motion and spacing.
+- Increase the prominence of resolution, HDR, Dolby Vision, and audio badges
+  with distinct visual treatments.
+
 ## 1.0.1 — 2026-07-31
 
 - Route seek and pause actions made inside the MPV window through an active

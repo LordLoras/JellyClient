@@ -16,7 +16,13 @@ export function MediaFormatBadges({ mediaFormat }: Props) {
 
   return badges.map((badge) => (
     <span
-      className={`media-format-badge media-format-badge--${badge.kind}`}
+      className={[
+        'media-format-badge',
+        `media-format-badge--${badge.kind}`,
+        badge.kind === 'range' && /dolby\s*vision|\bdv\b/i.test(badge.label)
+          ? 'media-format-badge--dolby-vision'
+          : ''
+      ].filter(Boolean).join(' ')}
       key={badge.kind}
       title={`${badge.label} source metadata reported by Jellyfin`}
     >

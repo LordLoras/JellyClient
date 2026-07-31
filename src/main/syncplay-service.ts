@@ -37,6 +37,13 @@ interface ClockSample {
   roundTrip: number;
 }
 
+interface PlaybackTimelineAnchor {
+  localTargetMs: number;
+  playlistItemId: string;
+  positionSeconds: number;
+  playing: boolean;
+}
+
 export class SyncPlayService {
   private readonly jellyfin: JellyfinService;
   private readonly socket: JellyfinWebSocketService;
@@ -46,11 +53,14 @@ export class SyncPlayService {
   private readonly events: ClientEventBus;
   private stateValue: SyncPlayState = structuredClone(initialSyncPlayState);
   private intentChain: Promise<unknown> = Promise.resolve();
+  private controlChain: Promise<unknown> = Promise.resolve();
+  private queueLoadChain: Promise<unknown> = Promise.resolve();
   private scheduledCommand: NodeJS.Timeout | null = null;
   private commandGeneration = 0;
   private lastBuffering: boolean | null = null;
   private queueLoadGeneration = 0;
   private speedResetTimer: NodeJS.Timeout | null = null;
+  private postStartCorrectionTimer: NodeJS.Timeout | null = null;
   private pendingCommand: SendCommand | null = null;
   private lastCommandEmittedAtMs = 0;
   private lastCommandKey: string | null = null;
@@ -64,6 +74,9 @@ export class SyncPlayService {
   private suppressNativePauseUntil = 0;
   private suppressNativeSeekUntil = 0;
   private suppressedPauseValue: boolean | null = null;
+  private queueLoadKey: string | null = null;
+  private timelineAnchor: PlaybackTimelineAnchor | null = null;
+  private lastDriftPublishedAt = 0;
 
   constructor(
     jellyfin: JellyfinService,
@@ -99,7 +112,7 @@ export class SyncPlayService {
         this.stateValue.membership === 'joined' &&
         this.stateValue.currentGroup?.state === 'Waiting'
       ) {
-        void this.sendReady();
+        void this.sendReady().then(() => this.flushPendingCommand());
       }
     });
     mpv.on('seek', () => this.queueNativeSeekRelay());
@@ -267,42 +280,45 @@ export class SyncPlayService {
     });
   }
 
-  async action(
+  action(
     action:
       | { type: 'play' }
       | { type: 'pause' }
       | { type: 'stop' }
       | { type: 'seek'; positionTicks: number }
   ): Promise<SyncPlayState> {
-    if (this.stateValue.membership !== 'joined') {
-      throw new Error('This client is not in a SyncPlay group.');
-    }
-    await this.socket.waitUntilConnected();
-    const api = getSyncPlayApi(this.jellyfin.api);
-    switch (action.type) {
-      case 'play':
-        await api.syncPlayUnpause();
-        break;
-      case 'pause':
-        this.suppressNativeControlRelay('pause', 750, true);
-        await this.playback.pauseLocal();
-        await api.syncPlayPause();
-        break;
-      case 'stop':
-        await api.syncPlayStop();
-        break;
-      case 'seek':
-        await api.syncPlaySeek({
-          seekRequestDto: {
-            PositionTicks: action.positionTicks
-          }
-        });
-        break;
-    }
-    return this.state;
+    return this.serializeControl(async () => {
+      if (this.stateValue.membership !== 'joined') {
+        throw new Error('This client is not in a SyncPlay group.');
+      }
+      await this.socket.waitUntilConnected();
+      const api = getSyncPlayApi(this.jellyfin.api);
+      switch (action.type) {
+        case 'play':
+          await api.syncPlayUnpause();
+          break;
+        case 'pause':
+          this.suppressNativeControlRelay('pause', 750, true);
+          await this.playback.pauseLocal();
+          await api.syncPlayPause();
+          break;
+        case 'stop':
+          await api.syncPlayStop();
+          break;
+        case 'seek':
+          await api.syncPlaySeek({
+            seekRequestDto: {
+              PositionTicks: action.positionTicks
+            }
+          });
+          break;
+      }
+      return this.state;
+    });
   }
 
   reset(): void {
+    this.invalidatePlaybackWork();
     this.cancelScheduledCommand();
     this.clearSpeedCorrection();
     this.lastBuffering = null;
@@ -310,6 +326,8 @@ export class SyncPlayService {
     this.lastCommandEmittedAtMs = 0;
     this.lastCommandKey = null;
     this.lastReadyRequest = null;
+    this.timelineAnchor = null;
+    this.lastDriftPublishedAt = 0;
     this.clearNativeControlRelays();
     this.setState(structuredClone(initialSyncPlayState));
   }
@@ -392,6 +410,11 @@ export class SyncPlayService {
     const current = index >= 0 ? queue.Playlist?.[index] : undefined;
     const itemId = current?.ItemId ?? null;
     const playlistItemId = current?.PlaylistItemId ?? null;
+    const startPositionTicks = queue.StartPositionTicks ?? 0;
+    const queueKey = itemId && playlistItemId
+      ? `${itemId}|${playlistItemId}|${startPositionTicks}`
+      : null;
+    const repeatedQueue = queueKey !== null && queueKey === this.queueLoadKey;
     this.lastBuffering = null;
     this.setState({
       ...this.stateValue,
@@ -408,44 +431,57 @@ export class SyncPlayService {
       itemId
     );
     if (alreadyLoaded) {
+      this.queueLoadKey = queueKey;
       await this.sendReady();
       this.flushPendingCommand();
       return;
     }
 
+    // Jellyfin can repeat the current queue while MPV is still opening it.
+    // Treat that as a status refresh instead of starting another loadfile race.
+    if (repeatedQueue) return;
+
     const loadGeneration = ++this.queueLoadGeneration;
+    this.queueLoadKey = queueKey;
     try {
-      await this.playback.play(
-        {
-          itemId,
-          startPositionTicks: queue.StartPositionTicks ?? 0,
-          mediaSourceId: null,
-          maxStreamingBitrate: null,
-          audioStreamIndex: null,
-          subtitleStreamIndex: null
-        },
-        {
-          paused: true,
-          playlistItemId
-        }
-      );
-      if (loadGeneration === this.queueLoadGeneration) {
-        await this.waitFor(
-          () => isSyncPlayPlayerReady(
+      await this.serializeQueueLoad(async () => {
+        if (loadGeneration !== this.queueLoadGeneration) return;
+        await this.playback.play(
+          {
+            itemId,
+            startPositionTicks,
+            mediaSourceId: null,
+            maxStreamingBitrate: null,
+            audioStreamIndex: null,
+            subtitleStreamIndex: null
+          },
+          {
+            paused: true,
+            playlistItemId
+          }
+        );
+      });
+      if (loadGeneration !== this.queueLoadGeneration) return;
+      await this.waitFor(
+        () =>
+          loadGeneration !== this.queueLoadGeneration ||
+          isSyncPlayPlayerReady(
             this.mpv.state,
             this.mpv.isConnected,
             this.mpv.isMediaLoaded,
             itemId
           ),
-          15_000,
-          'MPV did not finish loading the SyncPlay item.'
-        );
-        await this.sendReady();
-        this.flushPendingCommand();
-      }
+        15_000,
+        'MPV is still loading the SyncPlay item.'
+      );
+      if (loadGeneration !== this.queueLoadGeneration) return;
+      await this.sendReady();
+      this.flushPendingCommand();
     } catch (error) {
-      this.failProtocol(
-        userFacingError(error, 'Could not prepare the SyncPlay item.')
+      if (loadGeneration !== this.queueLoadGeneration) return;
+      this.queueLoadKey = null;
+      this.warnRecoverable(
+        `${userFacingError(error, 'Could not prepare the SyncPlay item.')} The room is still joined and playback will recover when MPV becomes ready.`
       );
     }
   }
@@ -474,7 +510,7 @@ export class SyncPlayService {
       return;
     }
     const emittedAt = this.commandTime(command);
-    if (emittedAt > 0 && emittedAt <= this.lastCommandEmittedAtMs) return;
+    if (emittedAt > 0 && emittedAt < this.lastCommandEmittedAtMs) return;
     const commandKey = [
       command.Command,
       command.PlaylistItemId ?? '',
@@ -493,9 +529,13 @@ export class SyncPlayService {
     this.scheduledCommand = setTimeout(() => {
       this.scheduledCommand = null;
       if (generation !== this.commandGeneration) return;
-      void this.applyCommand(command, localTarget).catch((error) => {
-        this.failProtocol(
-          userFacingError(error, 'Could not apply a SyncPlay command.')
+      void this.applyCommand(command, localTarget, generation).catch((error) => {
+        if (generation !== this.commandGeneration) return;
+        if (!this.playerReadyForCurrentQueue()) {
+          this.retainPendingCommand(command);
+        }
+        this.warnRecoverable(
+          `${userFacingError(error, 'Could not apply the latest SyncPlay command.')} The client will retry when MPV is ready.`
         );
       });
     }, delay);
@@ -503,72 +543,100 @@ export class SyncPlayService {
 
   private async applyCommand(
     command: SendCommand,
-    localTarget: number
+    localTarget: number,
+    generation: number
   ): Promise<void> {
     if (command.Command !== 'Stop') {
       await this.waitFor(
-        () => isSyncPlayPlayerReady(
-          this.mpv.state,
-          this.mpv.isConnected,
-          this.mpv.isMediaLoaded,
-          this.stateValue.groupQueueItemId
-        ),
+        () =>
+          generation !== this.commandGeneration ||
+          this.playerReadyForCurrentQueue(),
         15_000,
-        'MPV was not ready for the SyncPlay command.'
+        'MPV is still loading the SyncPlay item.'
       );
     }
+    if (generation !== this.commandGeneration) return;
     const scheduledPosition = command.PositionTicks ?? 0;
     switch (command.Command) {
       case 'Unpause': {
-        const lateTicks = Math.max(0, Date.now() - localTarget) * 10_000;
-        const targetSeconds =
-          (scheduledPosition + lateTicks) / TICKS_PER_SECOND;
-        const driftMs =
-          (this.mpv.state.positionSeconds - targetSeconds) * 1000;
-        this.setState({
-          ...this.stateValue,
-          driftMs
-        });
         const {
           softCorrectionThresholdMs,
           hardSeekThresholdMs
         } = this.config.settings.syncPlay;
+        await this.resetPlaybackSpeed();
+        if (generation !== this.commandGeneration) return;
+        let targetSeconds = this.commandTargetSeconds(
+          scheduledPosition,
+          localTarget,
+          true
+        );
+        const driftMs =
+          (this.mpv.state.positionSeconds - targetSeconds) * 1000;
         if (Math.abs(driftMs) >= hardSeekThresholdMs) {
-          await this.resetPlaybackSpeed();
           this.suppressNativeControlRelay('seek');
           await this.playback.seekLocal(targetSeconds);
+          if (generation !== this.commandGeneration) return;
         } else if (Math.abs(driftMs) >= softCorrectionThresholdMs) {
           const correctionRate = 0.03;
           await this.mpv.setSpeed(driftMs > 0 ? 1 - correctionRate : 1 + correctionRate);
+          if (generation !== this.commandGeneration) return;
           this.scheduleSpeedReset(
             Math.min(
               12_000,
               Math.max(1_000, Math.abs(driftMs) / correctionRate)
             )
           );
-        } else {
-          await this.resetPlaybackSpeed();
         }
+        // Recalculate after MPV commands so their IPC time is included in the
+        // shared timeline instead of being hidden by the pre-play drift value.
+        targetSeconds = this.commandTargetSeconds(
+          scheduledPosition,
+          localTarget,
+          true
+        );
+        this.setTimelineAnchor(targetSeconds, Date.now(), true);
         this.suppressNativeControlRelay('pause', 750, false);
         await this.playback.playLocal();
+        this.publishMeasuredDrift(true);
+        this.schedulePostStartCorrection(generation);
         break;
       }
       case 'Pause':
         await this.resetPlaybackSpeed();
+        if (generation !== this.commandGeneration) return;
         this.suppressNativeControlRelay('pause', 750, true);
         await this.playback.pauseLocal();
+        if (generation !== this.commandGeneration) return;
         this.suppressNativeControlRelay('seek');
         await this.playback.seekLocal(scheduledPosition / TICKS_PER_SECOND);
+        this.setTimelineAnchor(
+          scheduledPosition / TICKS_PER_SECOND,
+          Date.now(),
+          false
+        );
+        this.publishMeasuredDrift(true);
         break;
       case 'Seek':
         await this.resetPlaybackSpeed();
+        if (generation !== this.commandGeneration) return;
         this.suppressNativeControlRelay('seek');
         await this.playback.seekLocal(scheduledPosition / TICKS_PER_SECOND);
+        if (generation !== this.commandGeneration) return;
+        this.setTimelineAnchor(
+          scheduledPosition / TICKS_PER_SECOND,
+          Date.now(),
+          false
+        );
         await this.waitForPlayerRestart();
+        if (generation !== this.commandGeneration) return;
+        this.publishMeasuredDrift(true);
         await this.sendReady();
         break;
       case 'Stop':
         await this.resetPlaybackSpeed();
+        if (generation !== this.commandGeneration) return;
+        this.timelineAnchor = null;
+        this.queueLoadKey = null;
         this.suppressNativeControlRelay('both', 750, true);
         await this.playback.stopLocal();
         break;
@@ -576,6 +644,7 @@ export class SyncPlayService {
   }
 
   private async onPlayerState(): Promise<void> {
+    this.publishMeasuredDrift();
     if (
       this.stateValue.membership !== 'joined' ||
       !this.stateValue.playlistItemId
@@ -598,8 +667,8 @@ export class SyncPlayService {
         this.stateValue.groupQueueItemId
       )
     ) {
-      if (this.lastBuffering === false) return;
-      await this.sendReady();
+      if (this.lastBuffering !== false) await this.sendReady();
+      this.flushPendingCommand();
     }
   }
 
@@ -730,6 +799,7 @@ export class SyncPlayService {
   }
 
   private confirmLeft(): void {
+    this.invalidatePlaybackWork();
     this.cancelScheduledCommand();
     this.clearSpeedCorrection();
     this.lastBuffering = null;
@@ -737,6 +807,8 @@ export class SyncPlayService {
     this.lastCommandEmittedAtMs = 0;
     this.lastCommandKey = null;
     this.lastReadyRequest = null;
+    this.timelineAnchor = null;
+    this.lastDriftPublishedAt = 0;
     this.clearNativeControlRelays();
     this.setState({
       ...this.stateValue,
@@ -774,6 +846,16 @@ export class SyncPlayService {
     });
   }
 
+  private warnRecoverable(message: string): void {
+    this.events.emitClient({
+      type: 'notice',
+      data: {
+        level: 'warning',
+        message
+      }
+    });
+  }
+
   private mapGroup(group: GroupInfoDto): SyncPlayGroup {
     return {
       id: group.GroupId ?? '',
@@ -804,6 +886,9 @@ export class SyncPlayService {
     const command = this.pendingCommand;
     if (!command) return;
     this.pendingCommand = null;
+    // A command retained after a readiness timeout is intentionally retried;
+    // it must not be mistaken for a duplicate of its first attempt.
+    this.lastCommandKey = null;
     this.processCommand(command);
   }
 
@@ -867,8 +952,10 @@ export class SyncPlayService {
     label: string
   ): Promise<void> {
     try {
-      await this.socket.waitUntilConnected();
-      await operation();
+      await this.serializeControl(async () => {
+        await this.socket.waitUntilConnected();
+        await operation();
+      });
     } catch (error) {
       this.events.emitClient({
         type: 'notice',
@@ -919,6 +1006,136 @@ export class SyncPlayService {
     return result;
   }
 
+  private serializeControl<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.controlChain.then(operation, operation);
+    this.controlChain = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+
+  private serializeQueueLoad<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.queueLoadChain.then(operation, operation);
+    this.queueLoadChain = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+
+  private invalidatePlaybackWork(): void {
+    this.queueLoadGeneration += 1;
+    this.queueLoadKey = null;
+    if (this.postStartCorrectionTimer) {
+      clearTimeout(this.postStartCorrectionTimer);
+      this.postStartCorrectionTimer = null;
+    }
+  }
+
+  private playerReadyForCurrentQueue(): boolean {
+    return isSyncPlayPlayerReady(
+      this.mpv.state,
+      this.mpv.isConnected,
+      this.mpv.isMediaLoaded,
+      this.stateValue.groupQueueItemId
+    );
+  }
+
+  private commandTargetSeconds(
+    positionTicks: number,
+    localTargetMs: number,
+    playing: boolean
+  ): number {
+    const elapsedTicks = playing
+      ? Math.max(0, Date.now() - localTargetMs) * 10_000
+      : 0;
+    return (positionTicks + elapsedTicks) / TICKS_PER_SECOND;
+  }
+
+  private setTimelineAnchor(
+    positionSeconds: number,
+    localTargetMs: number,
+    playing: boolean
+  ): void {
+    if (!this.stateValue.playlistItemId) return;
+    this.timelineAnchor = {
+      localTargetMs,
+      playlistItemId: this.stateValue.playlistItemId,
+      positionSeconds,
+      playing
+    };
+  }
+
+  private publishMeasuredDrift(force = false): void {
+    const anchor = this.timelineAnchor;
+    if (
+      !anchor ||
+      anchor.playlistItemId !== this.stateValue.playlistItemId ||
+      !this.playerReadyForCurrentQueue()
+    ) {
+      return;
+    }
+    const now = Date.now();
+    if (!force && now - this.lastDriftPublishedAt < 500) return;
+    const expectedSeconds = anchor.positionSeconds + (
+      anchor.playing ? Math.max(0, now - anchor.localTargetMs) / 1000 : 0
+    );
+    const driftMs = (this.mpv.state.positionSeconds - expectedSeconds) * 1000;
+    if (
+      !force &&
+      Math.abs(driftMs - this.stateValue.driftMs) < 10 &&
+      now - this.lastDriftPublishedAt < 1_500
+    ) {
+      return;
+    }
+    this.lastDriftPublishedAt = now;
+    this.setState({
+      ...this.stateValue,
+      driftMs
+    });
+  }
+
+  private schedulePostStartCorrection(generation: number): void {
+    if (this.postStartCorrectionTimer) {
+      clearTimeout(this.postStartCorrectionTimer);
+    }
+    this.postStartCorrectionTimer = setTimeout(() => {
+      this.postStartCorrectionTimer = null;
+      if (
+        generation !== this.commandGeneration ||
+        this.mpv.state.paused ||
+        !this.playerReadyForCurrentQueue()
+      ) {
+        return;
+      }
+      const anchor = this.timelineAnchor;
+      if (!anchor?.playing) return;
+      const now = Date.now();
+      const expectedSeconds = anchor.positionSeconds +
+        Math.max(0, now - anchor.localTargetMs) / 1000;
+      const driftMs =
+        (this.mpv.state.positionSeconds - expectedSeconds) * 1000;
+      this.setState({ ...this.stateValue, driftMs });
+      if (
+        Math.abs(driftMs) <
+        this.config.settings.syncPlay.hardSeekThresholdMs
+      ) {
+        return;
+      }
+      this.suppressNativeControlRelay('seek', 1_500);
+      void this.playback.seekLocal(expectedSeconds).then(() => {
+        if (generation === this.commandGeneration) {
+          this.publishMeasuredDrift(true);
+        }
+      }).catch((error) => {
+        this.warnRecoverable(
+          userFacingError(error, 'Could not complete the SyncPlay drift correction.')
+        );
+      });
+    }, 750);
+  }
+
   private waitFor(
     predicate: () => boolean,
     timeoutMs: number,
@@ -966,10 +1183,7 @@ export class SyncPlayService {
       this.speedResetTimer = null;
       void this.resetPlaybackSpeed().then(() => {
         if (this.stateValue.membership === 'joined') {
-          this.setState({
-            ...this.stateValue,
-            driftMs: 0
-          });
+          this.publishMeasuredDrift(true);
         }
       });
     }, delayMs);
@@ -978,6 +1192,10 @@ export class SyncPlayService {
   private clearSpeedCorrection(): void {
     if (this.speedResetTimer) clearTimeout(this.speedResetTimer);
     this.speedResetTimer = null;
+    if (this.postStartCorrectionTimer) {
+      clearTimeout(this.postStartCorrectionTimer);
+      this.postStartCorrectionTimer = null;
+    }
     if (this.mpv.state.item) {
       void this.mpv.setSpeed(1).catch(() => undefined);
     }

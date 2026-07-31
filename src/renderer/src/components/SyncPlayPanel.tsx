@@ -104,7 +104,9 @@ export function SyncPlayPanel({
           <div className="clock-readout">
             <span>Clock offset <strong>{state.clockOffsetMs.toFixed(1)} ms</strong></span>
             <span>Round trip <strong>{state.roundTripMs.toFixed(1)} ms</strong></span>
-            <span>Current drift <strong>{state.driftMs.toFixed(1)} ms</strong></span>
+            <span title="MPV playback timeline compared with the shared room clock">
+              Playback offset <strong>{state.driftMs.toFixed(1)} ms</strong>
+            </span>
           </div>
           <button className="button button--danger button--wide" onClick={leave} disabled={busy}>
             <DoorOpen /> Leave room

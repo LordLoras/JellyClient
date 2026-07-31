@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   CircleUserRound,
   Clapperboard,
   Home,
@@ -14,6 +15,7 @@ import {
   WifiOff
 } from 'lucide-react';
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -116,6 +118,45 @@ export function App() {
   }, [connected]);
 
   const hero = useMemo(() => playableHero(store.home), [store.home]);
+
+  const goBack = useCallback(() => {
+    if (discardItem && !discardBusy) {
+      setDiscardItem(null);
+      return;
+    }
+    if (syncPanelOpen) {
+      setSyncPanelOpen(false);
+      return;
+    }
+    if (useAppStore.getState().detail) {
+      useAppStore.getState().setDetail(null);
+      return;
+    }
+    useAppStore.getState().goBack();
+  }, [discardBusy, discardItem, syncPanelOpen]);
+
+  useEffect(() => {
+    const onMouseUp = (event: MouseEvent) => {
+      if (event.button !== 3) return;
+      event.preventDefault();
+      goBack();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      const escapeClosesOverlay = event.key === 'Escape' && Boolean(
+        discardItem || syncPanelOpen || useAppStore.getState().detail
+      );
+      if ((event.altKey && event.key === 'ArrowLeft') || escapeClosesOverlay) {
+        event.preventDefault();
+        goBack();
+      }
+    };
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [goBack]);
 
   if (!store.bootstrap || !store.connection || !store.settings || !store.mpv || !store.playback || !store.syncPlay) {
     return (
@@ -288,16 +329,32 @@ export function App() {
 
       <div className="workspace">
         <header className="topbar">
-          <form className="search-box" onSubmit={submitSearch}>
-            <Search />
-            <input
-              value={searchText}
-              onChange={(event) => setSearchText(event.target.value)}
-              placeholder="Search your library"
-              aria-label="Search your library"
-            />
-            <kbd>Enter</kbd>
-          </form>
+          <div className="topbar__leading">
+            <button
+              className="back-button"
+              aria-label="Go back"
+              title="Back · Mouse button 4 · Alt+Left"
+              disabled={
+                store.navigationHistory.length === 0 &&
+                !store.detail &&
+                !syncPanelOpen &&
+                !discardItem
+              }
+              onClick={goBack}
+            >
+              <ArrowLeft />
+            </button>
+            <form className="search-box" onSubmit={submitSearch}>
+              <Search />
+              <input
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+                placeholder="Search your library"
+                aria-label="Search your library"
+              />
+              <kbd>Enter</kbd>
+            </form>
+          </div>
           <div className="topbar__actions">
             <span className={`connection-pill${store.connection.status === 'connected' ? ' is-online' : ''}`}>
               {store.connection.status === 'connected' ? <Wifi /> : <WifiOff />}
@@ -319,6 +376,7 @@ export function App() {
               aria-label="Sign out"
               onClick={async () => {
                 store.setConnection(await window.jellyClient.disconnect());
+                store.resetNavigation();
                 store.setHome({
                   libraries: [],
                   resume: [],

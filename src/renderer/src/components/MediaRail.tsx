@@ -1,4 +1,5 @@
-import { ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MediaItem } from '@shared/contracts.js';
 import { MediaCard } from './MediaCard';
 
@@ -23,17 +24,65 @@ export function MediaRail({
   onPlay,
   onDismiss
 }: Props) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ start: true, end: false });
+  const updateEdges = useCallback(() => {
+    const track = trackRef.current;
+    if (!track) return;
+    setEdges({
+      start: track.scrollLeft <= 2,
+      end: track.scrollLeft + track.clientWidth >= track.scrollWidth - 2
+    });
+  }, []);
+  const move = useCallback((direction: -1 | 1) => {
+    const track = trackRef.current;
+    if (!track) return;
+    track.scrollBy({
+      left: direction * Math.max(280, track.clientWidth * 0.82),
+      behavior: 'smooth'
+    });
+  }, []);
+
+  useEffect(() => {
+    updateEdges();
+    const track = trackRef.current;
+    if (!track) return;
+    const observer = new ResizeObserver(updateEdges);
+    observer.observe(track);
+    return () => observer.disconnect();
+  }, [items.length, landscape, updateEdges]);
+
   if (items.length === 0) return null;
   return (
-    <section className="rail">
+    <section className={`rail${landscape ? ' rail--landscape' : ''}`}>
       <header className="rail__header">
         <div>
           {kicker && <p className="eyebrow">{kicker}</p>}
           <h2>{title}</h2>
         </div>
-        <span>{items.length} titles <ChevronRight /></span>
+        <div className="rail__tools">
+          <span>{items.length} titles</span>
+          <button
+            onClick={() => move(-1)}
+            aria-label={`Scroll ${title} left`}
+            disabled={edges.start}
+          >
+            <ChevronLeft />
+          </button>
+          <button
+            onClick={() => move(1)}
+            aria-label={`Scroll ${title} right`}
+            disabled={edges.end}
+          >
+            <ChevronRight />
+          </button>
+        </div>
       </header>
-      <div className="rail__track">
+      <div
+        className={`rail__track${landscape ? ' rail__track--landscape' : ''}`}
+        ref={trackRef}
+        onScroll={updateEdges}
+      >
         {items.map((item) => (
           <MediaCard
             key={item.id}
