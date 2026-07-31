@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { PlaybackDiagnostics } from './contracts.js';
-import { initialPlaybackDiagnostics } from './defaults.js';
-import { playbackVerdict } from './playback-diagnostics.js';
+import {
+  initialPlaybackDiagnostics,
+  initialPlaybackState
+} from './defaults.js';
+import {
+  buildPlaybackDebugReport,
+  playbackVerdict
+} from './playback-diagnostics.js';
 
 function diagnostics(
   patch: Partial<PlaybackDiagnostics>
@@ -54,5 +60,17 @@ describe('playbackVerdict', () => {
 
     expect(result.processing).toContain('SDR adapted');
     expect(result.pqOutputReported).toBe(true);
+  });
+
+  it('includes the actionable playback error in a copied debug report', () => {
+    const report = JSON.parse(buildPlaybackDebugReport({
+      ...structuredClone(initialPlaybackState),
+      status: 'error',
+      error: 'MPV could not play this item: loading failed'
+    })) as { playback: { error: string } };
+
+    expect(report.playback.error).toBe(
+      'MPV could not play this item: loading failed'
+    );
   });
 });

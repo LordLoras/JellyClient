@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.4.1 — 2026-07-31
+
+### Playback reliability
+
+- Stopped automatic next-episode playback from advancing after MPV load,
+  decode, audio, or display errors.
+- Correlated MPV playlist entries with playback generations so events from a
+  replaced item cannot stop or advance the newly selected item.
+- Limited post-play countdowns to the currently loaded, active item and cleared
+  stale duration state before each load.
+- Preserved MPV's `file_error` message in the player state and copyable debug
+  report, and marked failed Jellyfin playback sessions as failed.
+- Kept fast asynchronous MPV failures from being overwritten by a later
+  loading state.
+- Made external-subtitle failures non-fatal to video playback and cleaned up a
+  failed MPV IPC startup before retrying.
+
+### Audio and VIDAA guards
+
+- Reapplied the selected Windows audio device and passthrough policy before
+  each item, including after a decoded-PCM fallback.
+- Reported a failed PCM retry as an error instead of claiming playback
+  continued successfully.
+- Prevented duplicate or failed VIDAA media endings from starting the next
+  episode and reported VIDAA media errors as failed stops.
+
 ## 0.4.0 — 2026-07-31
 
 ### Windows

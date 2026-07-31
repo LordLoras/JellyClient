@@ -147,6 +147,7 @@ export interface VidaaPlaybackPlan {
 
 export interface VidaaPlaybackReport {
   event: 'start' | 'progress' | 'stop';
+  failed?: boolean;
   itemId: string;
   mediaSourceId: string;
   playSessionId: string;

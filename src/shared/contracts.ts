@@ -1,5 +1,5 @@
 export const APP_NAME = 'JellyClient';
-export const APP_VERSION = '0.4.0';
+export const APP_VERSION = '0.4.1';
 export const TICKS_PER_SECOND = 10_000_000;
 
 export type ConnectionStatus =

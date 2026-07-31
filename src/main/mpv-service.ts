@@ -32,15 +32,22 @@ import { ClientEventBus } from './event-bus.js';
 import { userFacingError } from './errors.js';
 import { skipPromptAss } from './mpv-skip-overlay.js';
 import { postPlayAss } from './mpv-postplay-overlay.js';
+import {
+  MpvPlaybackGenerationTracker,
+  type MpvEndFileEvent,
+  type MpvFileEvent
+} from './playback-lifecycle.js';
 
 interface MpvMessage {
   request_id?: number;
   error?: string;
+  file_error?: string;
   data?: unknown;
   event?: string;
   name?: string;
   reason?: string;
   args?: string[];
+  playlist_entry_id?: number;
 }
 
 interface PendingCommand {
@@ -118,6 +125,8 @@ export class MpvService extends EventEmitter {
   private skipPromptLabel: string | null = null;
   private postPlayVisible = false;
   private audioVerificationTimer: NodeJS.Timeout | null = null;
+  private readonly playbackGenerations = new MpvPlaybackGenerationTracker();
+  private lastMpvError: string | null = null;
 
   constructor(config: ConfigService, events: ClientEventBus) {
     super();
@@ -252,57 +261,86 @@ export class MpvService extends EventEmitter {
       this.audioVerificationTimer = null;
     }
     const nextGeneration = this.stateValue.generation + 1;
+    this.lastMpvError = null;
     this.setState({
       ...this.stateValue,
       status: 'starting',
       generation: nextGeneration,
       positionSeconds: request.startSeconds,
+      durationSeconds: 0,
       paused: true,
       buffering: false,
       error: null
     });
 
-    await this.ensureRunning(capability.executablePath);
-    await this.setSkipPrompt(null);
-    await this.setPostPlayPrompt(this.stateValue.nextItem, null, false);
-    await this.command([
-      'set_property',
-      'http-header-fields',
-      [request.authorizationHeader]
-    ]);
-    await this.command(['set_property', 'force-media-title', request.title]);
-    await this.command(['set_property', 'fullscreen', request.fullscreen]);
-    await this.command(['set_property', 'pause', request.paused]);
-    const player = this.config.settings.player;
-    await this.command(['set_property', 'speed', player.playbackSpeed]);
-    await this.command(['set_property', 'sub-delay', player.subtitleDelaySeconds]);
-    await this.command(['set_property', 'audio-delay', player.audioDelaySeconds]);
-    const loadCommand: unknown[] = [
-      'loadfile',
-      request.url,
-      'replace'
-    ];
-    if (request.startSeconds > 0) {
-      loadCommand.push(-1, {
-        start: String(request.startSeconds)
-      });
+    try {
+      await this.ensureRunning(capability.executablePath);
+      await this.setSkipPrompt(null);
+      await this.setPostPlayPrompt(this.stateValue.nextItem, null, false);
+      await this.command([
+        'set_property',
+        'http-header-fields',
+        [request.authorizationHeader]
+      ]);
+      await this.command(['set_property', 'force-media-title', request.title]);
+      await this.command(['set_property', 'fullscreen', request.fullscreen]);
+      await this.command(['set_property', 'pause', request.paused]);
+      const player = this.config.settings.player;
+      await this.command(['set_property', 'speed', player.playbackSpeed]);
+      await this.command(['set_property', 'sub-delay', player.subtitleDelaySeconds]);
+      await this.command(['set_property', 'audio-delay', player.audioDelaySeconds]);
+      await this.applyAudioOutputSettings(player);
+      const loadCommand: unknown[] = [
+        'loadfile',
+        request.url,
+        'replace'
+      ];
+      if (request.startSeconds > 0) {
+        loadCommand.push(-1, {
+          start: String(request.startSeconds)
+        });
+      }
+      this.playbackGenerations.beginLoad(nextGeneration);
+      await this.command(loadCommand);
+    } catch (error) {
+      this.playbackGenerations.abandonLoad(nextGeneration);
+      const message = userFacingError(error, 'Unknown MPV error');
+      this.fail(`MPV could not start playback: ${message}`);
+      throw error;
     }
-    await this.command(loadCommand);
-    if (request.externalSubtitle) {
+    if (
+      request.externalSubtitle &&
+      this.stateValue.generation === nextGeneration &&
+      this.stateValue.status !== 'error' &&
+      this.stateValue.status !== 'stopped'
+    ) {
       await this.command([
         'sub-add',
         request.externalSubtitle.url,
         'select',
         request.externalSubtitle.title,
         request.externalSubtitle.language
-      ]);
+      ]).catch((error: unknown) => {
+        this.events.emitClient({
+          type: 'notice',
+          data: {
+            level: 'warning',
+            message: `Playback started, but the external subtitle could not be loaded: ${userFacingError(error, 'Unknown error')}`
+          }
+        });
+      });
       this.pendingSubtitlePreference = null;
     }
-    this.setState({
-      ...this.stateValue,
-      status: 'loading',
-      fullscreen: request.fullscreen
-    });
+    if (
+      this.stateValue.generation === nextGeneration &&
+      this.stateValue.status === 'starting'
+    ) {
+      this.setState({
+        ...this.stateValue,
+        status: 'loading',
+        fullscreen: request.fullscreen
+      });
+    }
     return this.state;
   }
 
@@ -513,44 +551,56 @@ export class MpvService extends EventEmitter {
     child.stderr.on('data', (chunk: Buffer) => {
       const message = chunk.toString('utf8').trim();
       if (/fatal|error/i.test(message)) {
-        this.updateDiagnostics({ reason: message.slice(0, 300) });
+        const matchingLine = message
+          .split(/\r?\n/)
+          .reverse()
+          .find((line) => /fatal|error|failed/i.test(line));
+        this.lastMpvError = (matchingLine ?? message).slice(0, 300);
       }
     });
 
-    await this.connectPipe();
-    for (const [index, property] of OBSERVED_PROPERTIES.entries()) {
-      await this.command(['observe_property', index + 1, property]);
+    try {
+      await this.connectPipe();
+      for (const [index, property] of OBSERVED_PROPERTIES.entries()) {
+        await this.command(['observe_property', index + 1, property]);
+      }
+      await this.command([
+        'define-section',
+        'jellyclient-skip',
+        'n script-message jellyclient-skip\nN script-message jellyclient-skip',
+        'force'
+      ]);
+      await this.command([
+        'define-section',
+        'jellyclient-controls',
+        [
+          'a cycle audio',
+          'A cycle audio',
+          's cycle sub',
+          'S cycle sub',
+          'Ctrl+LEFT script-message jellyclient-chapter -1',
+          'Ctrl+RIGHT script-message jellyclient-chapter 1'
+        ].join('\n'),
+        'force'
+      ]);
+      await this.command(['enable-section', 'jellyclient-controls']);
+      await this.command([
+        'define-section',
+        'jellyclient-postplay',
+        [
+          'n script-message jellyclient-play-next',
+          'N script-message jellyclient-play-next',
+          'ESC script-message jellyclient-cancel-next'
+        ].join('\n'),
+        'force'
+      ]);
+    } catch (error) {
+      this.intentionalShutdown = true;
+      this.closeSocket();
+      if (child.exitCode === null && !child.killed) child.kill();
+      if (this.processValue === child) this.processValue = null;
+      throw error;
     }
-    await this.command([
-      'define-section',
-      'jellyclient-skip',
-      'n script-message jellyclient-skip\nN script-message jellyclient-skip',
-      'force'
-    ]);
-    await this.command([
-      'define-section',
-      'jellyclient-controls',
-      [
-        'a cycle audio',
-        'A cycle audio',
-        's cycle sub',
-        'S cycle sub',
-        'Ctrl+LEFT script-message jellyclient-chapter -1',
-        'Ctrl+RIGHT script-message jellyclient-chapter 1'
-      ].join('\n'),
-      'force'
-    ]);
-    await this.command(['enable-section', 'jellyclient-controls']);
-    await this.command([
-      'define-section',
-      'jellyclient-postplay',
-      [
-        'n script-message jellyclient-play-next',
-        'N script-message jellyclient-play-next',
-        'ESC script-message jellyclient-cancel-next'
-      ].join('\n'),
-      'force'
-    ]);
   }
 
   private buildArguments(settings: AppSettings): string[] {
@@ -731,14 +781,30 @@ export class MpvService extends EventEmitter {
       this.onProperty(message.name, message.data);
       return;
     }
+    if (message.event === 'start-file') {
+      const event = this.playbackGenerations.start(
+        this.playlistEntryId(message),
+        this.stateValue.generation
+      );
+      this.emit('start-file', event satisfies MpvFileEvent);
+      return;
+    }
     if (message.event === 'file-loaded') {
+      const event = this.playbackGenerations.current(
+        this.playlistEntryId(message),
+        this.stateValue.generation
+      );
+      if (event.generation !== this.stateValue.generation) {
+        this.emit('file-loaded', event satisfies MpvFileEvent);
+        return;
+      }
       this.setState({
         ...this.stateValue,
         status: this.stateValue.paused ? 'paused' : 'playing',
         buffering: false,
         error: null
       });
-      this.emit('file-loaded', this.state);
+      this.emit('file-loaded', event satisfies MpvFileEvent);
       this.scheduleAudioVerification(this.stateValue.generation);
       return;
     }
@@ -751,14 +817,58 @@ export class MpvService extends EventEmitter {
       return;
     }
     if (message.event === 'end-file') {
-      this.setState({
-        ...this.stateValue,
-        status: 'stopped',
-        paused: true,
-        buffering: false
-      });
-      this.emit('end-file', message.reason ?? 'unknown');
+      const tracked = this.playbackGenerations.end(
+        this.playlistEntryId(message),
+        this.stateValue.generation
+      );
+      const event: MpvEndFileEvent = {
+        ...tracked,
+        reason: message.reason ?? 'unknown',
+        error: this.mpvEventError(message.file_error ?? message.error)
+      };
+      const isCurrent = event.generation === this.stateValue.generation;
+      if (isCurrent && event.reason !== 'redirect') {
+        if (this.audioVerificationTimer) {
+          clearTimeout(this.audioVerificationTimer);
+          this.audioVerificationTimer = null;
+        }
+        void this.setSkipPrompt(null).catch(() => undefined);
+        void this.setPostPlayPrompt(
+          this.stateValue.nextItem,
+          null,
+          event.reason === 'error'
+        ).catch(() => undefined);
+        if (event.reason === 'error') {
+          const detail = event.error ?? this.lastMpvError;
+          const errorMessage = detail
+            ? `MPV could not play this item: ${detail}`
+            : 'MPV could not play this item.';
+          this.fail(errorMessage);
+          this.events.emitClient({
+            type: 'notice',
+            data: { level: 'error', message: errorMessage }
+          });
+        } else {
+          this.setState({
+            ...this.stateValue,
+            status: 'stopped',
+            paused: true,
+            buffering: false
+          });
+        }
+      }
+      this.emit('end-file', event);
     }
+  }
+
+  private playlistEntryId(message: MpvMessage): number | null {
+    return typeof message.playlist_entry_id === 'number'
+      ? message.playlist_entry_id
+      : null;
+  }
+
+  private mpvEventError(error: string | undefined): string | null {
+    return error && error !== 'success' ? error : null;
   }
 
   private onProperty(name: string, value: unknown): void {
@@ -1093,20 +1203,58 @@ export class MpvService extends EventEmitter {
       return;
     }
 
-    await this.command(['set_property', 'audio-spdif', '']).catch(() => undefined);
-    await this.command(['audio-reload']).catch(() => undefined);
-    this.updateDiagnostics({
-      audioPassthroughActive: false,
-      audioFallbackReason:
-        'Bitstream output did not initialize, so JellyClient reloaded the track as decoded PCM.'
-    });
-    this.events.emitClient({
-      type: 'notice',
-      data: {
-        level: 'warning',
-        message: 'Audio passthrough was unavailable. Playback continued with decoded PCM.'
-      }
-    });
+    try {
+      await this.command(['set_property', 'audio-spdif', '']);
+      await this.command(['audio-reload']);
+      this.updateDiagnostics({
+        audioPassthroughActive: false,
+        audioFallbackReason:
+          'Bitstream output did not initialize, so JellyClient reloaded the track as decoded PCM.'
+      });
+      this.events.emitClient({
+        type: 'notice',
+        data: {
+          level: 'warning',
+          message: 'Audio passthrough was unavailable. Playback continued with decoded PCM.'
+        }
+      });
+    } catch (error) {
+      const detail = userFacingError(error, 'Unknown MPV error');
+      this.updateDiagnostics({
+        audioPassthroughActive: false,
+        audioFallbackReason: `The automatic decoded-PCM retry failed: ${detail}`
+      });
+      this.events.emitClient({
+        type: 'notice',
+        data: {
+          level: 'error',
+          message: 'Audio output could not be initialized. Select decoded PCM or another Windows output device.'
+        }
+      });
+    }
+  }
+
+  private async applyAudioOutputSettings(
+    player: AppSettings['player']
+  ): Promise<void> {
+    const passthroughCodecs = player.audioOutputMode === 'passthrough'
+      ? mpvPassthroughCodecs(player.audioPassthrough)
+      : [];
+    await this.command([
+      'set_property',
+      'audio-device',
+      player.audioDevice || 'auto'
+    ]);
+    await this.command([
+      'set_property',
+      'audio-spdif',
+      passthroughCodecs.join(',')
+    ]);
+    await this.command([
+      'set_property',
+      'audio-exclusive',
+      passthroughCodecs.length > 0
+    ]);
   }
 
   private numberOrNull(value: unknown): number | null {
@@ -1145,6 +1293,7 @@ export class MpvService extends EventEmitter {
     this.pending.clear();
     this.skipPromptLabel = null;
     this.postPlayVisible = false;
+    this.playbackGenerations.reset();
   }
 
   private async candidatePaths(overridePath?: string): Promise<string[]> {

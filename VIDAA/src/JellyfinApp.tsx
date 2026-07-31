@@ -641,7 +641,10 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
     }, settings.controlTimeoutSeconds * 1_000);
   }
 
-  function report(event: VidaaPlaybackReport['event']) {
+  function report(
+    event: VidaaPlaybackReport['event'],
+    failed = false
+  ) {
     const video = videoRef.current;
     if (!video) return;
     const activePlan = planRef.current;
@@ -650,6 +653,7 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         event,
+        failed,
         itemId: activePlan.item.id,
         mediaSourceId: activePlan.mediaSourceId,
         playSessionId: activePlan.playSessionId,
@@ -884,15 +888,30 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
       <video
         autoPlay
         onDurationChange={(event) => setTotal(event.currentTarget.duration || 0)}
-        onEnded={() => {
-          if (plan.nextItem && settings.autoPlayNext && !postPlayCanceled) {
-            if (!stoppedRef.current) { stoppedRef.current = true; report('stop'); }
+        onEnded={(event) => {
+          if (stoppedRef.current) return;
+          stoppedRef.current = true;
+          if (
+            startedRef.current &&
+            !event.currentTarget.error &&
+            plan.nextItem &&
+            settings.autoPlayNext &&
+            !postPlayCanceled
+          ) {
+            report('stop');
             onPlayNext(plan.nextItem);
-          } else stop();
+          } else {
+            report('stop');
+            onExit();
+          }
         }}
         onError={() => {
           clearControlsTimer();
           setControlsVisible(true);
+          if (!stoppedRef.current) {
+            stoppedRef.current = true;
+            report('stop', true);
+          }
           setError('VIDAA could not open this negotiated stream. Check the delivery details below.');
         }}
         onLoadedMetadata={(event) => {

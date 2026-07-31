@@ -37,6 +37,11 @@ import {
   MpvService,
   type MpvLoadRequest
 } from './mpv-service.js';
+import {
+  shouldAutomaticallyAdvance,
+  type MpvEndFileEvent,
+  type MpvFileEvent
+} from './playback-lifecycle.js';
 
 interface ActivePlayback {
   generation: number;
@@ -45,6 +50,7 @@ interface ActivePlayback {
   mediaSourceId: string;
   playSessionId: string;
   method: typeof PlayMethod[keyof typeof PlayMethod];
+  loaded: boolean;
   started: boolean;
   stopped: boolean;
   initialAudioIndex: number | null;
@@ -80,18 +86,14 @@ export class PlaybackService extends EventEmitter {
     this.jellyfin = jellyfin;
     this.mpv = mpv;
     this.config = config;
-    this.mpv.on('file-loaded', () => this.queueReport('start'));
-    this.mpv.on('end-file', () => {
-      this.queueReport('stop');
+    this.mpv.on('file-loaded', (event: MpvFileEvent) => {
       const active = this.active;
-      if (
-        active?.nextItem &&
-        !active.postPlayCanceled &&
-        !active.playNextRequested &&
-        this.config.settings.player.autoPlayNext
-      ) {
-        this.requestPlayNext();
-      }
+      if (!active || event.generation !== active.generation) return;
+      active.loaded = true;
+      this.queueReport('start');
+    });
+    this.mpv.on('end-file', (event: MpvEndFileEvent) => {
+      this.handleEndFile(event);
     });
     this.mpv.on('skip-segment', () => this.requestSegmentSkip());
     this.mpv.on('chapter-step', (step: number) => {
@@ -221,6 +223,7 @@ export class PlaybackService extends EventEmitter {
       mediaSourceId: source.Id,
       playSessionId: response.data.PlaySessionId ?? '',
       method,
+      loaded: false,
       started: false,
       stopped: false,
       initialAudioIndex:
@@ -273,17 +276,26 @@ export class PlaybackService extends EventEmitter {
       item.trickplay.filter((track) => track.mediaSourceId === source.Id)
     );
 
-    await this.mpv.load({
-      url: streamUrl,
-      authorizationHeader: this.jellyfin.authorizationHeader,
-      title: item.seriesName
-        ? `${item.seriesName} · ${item.name}`
-        : item.name,
-      startSeconds: input.startPositionTicks / TICKS_PER_SECOND,
-      fullscreen: this.config.settings.player.fullscreenOnPlay,
-      paused: options.paused ?? false,
-      externalSubtitle: this.externalSubtitle(source, subtitle)
-    });
+    try {
+      await this.mpv.load({
+        url: streamUrl,
+        authorizationHeader: this.jellyfin.authorizationHeader,
+        title: item.seriesName
+          ? `${item.seriesName} · ${item.name}`
+          : item.name,
+        startSeconds: input.startPositionTicks / TICKS_PER_SECOND,
+        fullscreen: this.config.settings.player.fullscreenOnPlay,
+        paused: options.paused ?? false,
+        externalSubtitle: this.externalSubtitle(source, subtitle)
+      });
+    } catch (error) {
+      const failed = this.active;
+      if (failed?.generation === generation) {
+        void this.reportStopped(true, failed, this.mpv.state)
+          .catch(() => undefined);
+      }
+      throw error;
+    }
     return this.state;
   }
 
@@ -385,13 +397,16 @@ export class PlaybackService extends EventEmitter {
     await this.mpv.shutdown();
   }
 
-  private queueReport(type: 'start' | 'progress' | 'stop'): void {
+  private queueReport(
+    type: 'start' | 'progress' | 'stop',
+    failed = false
+  ): void {
     const target = this.active;
     const state = this.mpv.state;
     this.reportChain = this.reportChain
       .then(async () => {
         if (type === 'start') await this.reportStarted(target, state);
-        else if (type === 'stop') await this.reportStopped(false, target, state);
+        else if (type === 'stop') await this.reportStopped(failed, target, state);
         else await this.reportProgress(target, state);
       })
       .catch(() => {
@@ -579,9 +594,12 @@ export class PlaybackService extends EventEmitter {
     const active = this.active;
     if (
       !active?.nextItem ||
+      !active.loaded ||
       active.stopped ||
       active.postPlayCanceled ||
       active.playNextRequested ||
+      state.generation !== active.generation ||
+      !['playing', 'paused', 'buffering'].includes(state.status) ||
       state.durationSeconds <= 0
     ) return;
     const countdown = this.config.settings.player.nextEpisodeCountdownSeconds;
@@ -610,7 +628,12 @@ export class PlaybackService extends EventEmitter {
 
   private requestPlayNext(): void {
     const active = this.active;
-    if (!active?.nextItem || active.playNextRequested) return;
+    if (
+      !active?.nextItem ||
+      !active.loaded ||
+      active.stopped ||
+      active.playNextRequested
+    ) return;
     active.playNextRequested = true;
     void this.mpv.setPostPlayPrompt(active.nextItem, null, false)
       .catch(() => undefined);
@@ -622,6 +645,31 @@ export class PlaybackService extends EventEmitter {
       audioStreamIndex: null,
       subtitleStreamIndex: null
     } satisfies PlayMediaInput);
+  }
+
+  private handleEndFile(event: MpvEndFileEvent): void {
+    const active = this.active;
+    if (!active || event.generation !== active.generation) return;
+
+    const autoAdvance = shouldAutomaticallyAdvance(
+      event,
+      {
+        generation: active.generation,
+        loaded: active.loaded,
+        stopped: active.stopped,
+        hasNextItem: Boolean(active.nextItem),
+        postPlayCanceled: active.postPlayCanceled,
+        playNextRequested: active.playNextRequested
+      },
+      this.config.settings.player.autoPlayNext
+    );
+
+    if (autoAdvance) this.requestPlayNext();
+    void this.reportStopped(
+      event.reason === 'error',
+      active,
+      this.mpv.state
+    ).catch(() => undefined);
   }
 
   private selectMediaSource(

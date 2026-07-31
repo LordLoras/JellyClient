@@ -104,7 +104,8 @@ export function buildPlaybackDebugReport(playback: PlaybackState): string {
       positionSeconds: playback.positionSeconds,
       durationSeconds: playback.durationSeconds,
       paused: playback.paused,
-      buffering: playback.buffering
+      buffering: playback.buffering,
+      error: playback.error
     },
     verdict: {
       transport: verdict.transport,
