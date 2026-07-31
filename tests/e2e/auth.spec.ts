@@ -307,6 +307,16 @@ test('defaults automatic subtitles to English', async () => {
   await expect(
     page.getByRole('combobox', { name: /Preferred language/ })
   ).toHaveValue('eng');
+  const audioMode = page.getByRole('combobox', { name: 'Audio output mode' });
+  await expect(audioMode).toHaveValue('pcm');
+  await audioMode.selectOption('passthrough');
+  await expect(page.getByRole('checkbox', { name: /E-AC-3/ })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: /TrueHD/ })).not.toBeChecked();
+  await page.getByRole('heading', { name: 'Audio output' }).scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: resolve('artifacts', 'settings-audio-output.png'),
+    fullPage: true
+  });
 });
 
 test('hides empty filesystem folders from a movie library', async () => {

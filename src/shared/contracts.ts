@@ -1,5 +1,5 @@
 export const APP_NAME = 'JellyClient';
-export const APP_VERSION = '0.3.0';
+export const APP_VERSION = '0.4.0';
 export const TICKS_PER_SECOND = 10_000_000;
 
 export type ConnectionStatus =
@@ -21,6 +21,20 @@ export type PlaybackStatus =
 
 export type HdrMode = 'auto' | 'passthrough' | 'tone-map';
 export type GpuApi = 'd3d11' | 'vulkan';
+export type AudioOutputMode = 'pcm' | 'passthrough';
+
+export interface AudioPassthroughSettings {
+  ac3: boolean;
+  eac3: boolean;
+  truehd: boolean;
+  dts: boolean;
+  dtsHd: boolean;
+}
+
+export interface MpvAudioDevice {
+  id: string;
+  description: string;
+}
 export type CatalogSort =
   | 'SortName'
   | 'DateCreated'
@@ -80,6 +94,9 @@ export interface PlayerSettings {
   hdrMode: HdrMode;
   gpuApi: GpuApi;
   hardwareDecoding: boolean;
+  audioDevice: string;
+  audioOutputMode: AudioOutputMode;
+  audioPassthrough: AudioPassthroughSettings;
   alwaysOnTop: boolean;
   fullscreenOnPlay: boolean;
   autoEnableSubtitles: boolean;
@@ -306,6 +323,12 @@ export interface PlaybackDiagnostics {
   audioOutputFormat: string | null;
   audioOutputChannels: string | null;
   audioOutputSampleRate: number | null;
+  audioRequestedDevice: string;
+  audioDriver: string | null;
+  audioOutputMode: AudioOutputMode;
+  audioPassthroughCodecs: string[];
+  audioPassthroughActive: boolean;
+  audioFallbackReason: string | null;
   cacheDurationSeconds: number;
   droppedFrames: number;
   mpvVersion: string | null;
@@ -443,6 +466,7 @@ export interface JellyClientApi {
   ): Promise<PlaybackState>;
   copyDebugReport(report: string): Promise<void>;
   probeMpv(): Promise<MpvCapability>;
+  listAudioDevices(): Promise<MpvAudioDevice[]>;
   saveSettings(settings: AppSettings): Promise<AppSettings>;
   chooseMpv(): Promise<MpvCapability>;
   openConfigFolder(): Promise<void>;

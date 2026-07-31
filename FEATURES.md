@@ -36,10 +36,12 @@ library data and stream negotiation, then opens playback in MPV.
 - Prefer forced subtitles and optionally avoid SDH/CC tracks.
 - Remember manually selected audio and subtitle languages for each series.
 - Adjust playback speed, subtitle delay, and audio delay while watching.
-
-The app currently uses the Windows default audio output and decodes audio to
-PCM. Selecting a different output device and optional HDMI passthrough are not
-implemented yet.
+- Choose any audio endpoint reported by MPV, including speakers, headphones,
+  a television over HDMI, or a directly connected receiver.
+- Use decoded PCM by default or enable passthrough separately for AC-3,
+  E-AC-3, TrueHD, DTS, and DTS-HD.
+- Fall back to decoded PCM when a selected endpoint cannot initialize the
+  requested bitstream.
 
 ## Navigation and episode playback
 
@@ -65,6 +67,8 @@ implemented yet.
 - Inspect Jellyfin's source and delivery decision.
 - Inspect MPV's decoded video, display target, render path, dropped frames,
   cache state, and audio output information.
+- Compare the requested audio device and passthrough mode with MPV's actual
+  output driver, format, channel layout, and fallback status.
 - Open MPV's native statistics overlay.
 - Copy a debug report that excludes the Jellyfin password and access token.
 
@@ -74,8 +78,6 @@ Windows, GPU, HDMI, and television chain entered HDR mode.
 
 ## Current boundaries
 
-- Audio output-device selection and encoded-audio passthrough are not yet
-  available.
 - Automatic display refresh-rate switching is not implemented and is currently
   a lower priority.
 - Dolby Vision output on Windows depends on the complete certified Windows and

@@ -29,11 +29,15 @@ import type {
   VidaaPlayMethod,
   VidaaTrackChoice
 } from '../src/jellyfin-types.js';
+import {
+  deviceProfile,
+  resolvedAudioProfile
+} from './audio-profile.js';
 
 const VIDAA_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const DEFAULT_SESSION_PATH = resolve(VIDAA_ROOT, 'jellyfin.local.json');
 const CLIENT_NAME = 'JellyClient VIDAA';
-const CLIENT_VERSION = '0.3.0';
+const CLIENT_VERSION = '0.4.0';
 const TICKS_PER_SECOND = 10_000_000;
 const TEXT_SUBTITLE_CODECS = new Set([
   'ass',
@@ -627,34 +631,6 @@ async function mediaSegments(
   }
 }
 
-function deviceProfile() {
-  return {
-    Name: 'JellyClient VIDAA native video',
-    MaxStreamingBitrate: 120_000_000,
-    MaxStaticBitrate: 120_000_000,
-    DirectPlayProfiles: [{
-      Container: 'mp4,m4v,mov',
-      VideoCodec: 'h264,hevc',
-      AudioCodec: 'aac,ac3,eac3,mp3',
-      Type: 'Video'
-    }],
-    TranscodingProfiles: [{
-      Container: 'mp4',
-      Type: 'Video',
-      VideoCodec: 'h264,hevc',
-      AudioCodec: 'aac,ac3,eac3',
-      Protocol: 'http',
-      Context: 'Streaming',
-      CopyTimestamps: true,
-      EnableSubtitlesInManifest: false,
-      MaxAudioChannels: '6'
-    }],
-    SubtitleProfiles: [
-      'srt', 'subrip', 'ass', 'ssa', 'webvtt', 'vtt'
-    ].map((format) => ({ Format: format, Method: 'External' }))
-  };
-}
-
 function playMethod(source: RawMediaSource): VidaaPlayMethod {
   if (source.SupportsDirectPlay) return 'DirectPlay';
   if (source.SupportsDirectStream) return 'DirectStream';
@@ -715,6 +691,7 @@ async function planPlayback(
     throw new Error('Bitmap subtitles are not yet available in the VIDAA overlay. Choose subtitles off or a text/ASS track for this test.');
   }
   const user = encodeURIComponent(session.userId);
+  const audioProfile = resolvedAudioProfile(input);
   const playback = await jellyfinJson<{
     MediaSources?: RawMediaSource[];
     PlaySessionId?: string;
@@ -728,13 +705,13 @@ async function planPlayback(
       AudioStreamIndex: input.audioStreamIndex,
       SubtitleStreamIndex: null,
       MaxStreamingBitrate: input.maxStreamingBitrate ?? 120_000_000,
-      MaxAudioChannels: 6,
+      MaxAudioChannels: audioProfile.maxChannels,
       EnableDirectPlay: true,
       EnableDirectStream: true,
       EnableTranscoding: true,
       AllowVideoStreamCopy: true,
       AllowAudioStreamCopy: true,
-      DeviceProfile: deviceProfile()
+      DeviceProfile: deviceProfile(audioProfile)
     })
   });
   const source = playback.MediaSources?.find((candidate) =>
@@ -786,6 +763,20 @@ async function planPlayback(
       input.audioStreamIndex === null || stream.Index === input.audioStreamIndex
     )
   );
+  const requestedAudioCodec = queryValue(upstream, ['AudioCodec', 'acodec']);
+  const audioReasons = transcodeReasons(source, upstream).filter((reason) =>
+    reason.toLowerCase().startsWith('audio') ||
+    reason === 'SecondaryAudioNotSupported'
+  );
+  const sourceAudioCodec = audio?.Codec?.toLowerCase() ?? null;
+  const negotiatedAudioCodec = requestedAudioCodec?.toLowerCase() ?? null;
+  const audioIsCopy = method === 'DirectPlay' ||
+    negotiatedAudioCodec === 'copy' ||
+    (
+      audioReasons.length === 0 &&
+      Boolean(sourceAudioCodec) &&
+      (!negotiatedAudioCodec || negotiatedAudioCodec === sourceAudioCodec)
+    );
   const ticket = randomUUID();
   tickets.set(ticket, {
     upstreamUrl: upstream.toString(),
@@ -818,7 +809,13 @@ async function planPlayback(
     videoCodec: video?.Codec ?? null,
     videoRange: videoRange(video),
     audioCodec: audio?.Codec ?? null,
+    audioOutputCodec:
+      audioIsCopy || negotiatedAudioCodec === 'copy'
+        ? audio?.Codec ?? null
+        : requestedAudioCodec ?? audio?.Codec ?? null,
     audioLayout: audio?.ChannelLayout ?? null,
+    audioIsCopy,
+    audioProfile: audioProfile.name,
     startPositionSeconds: input.startPositionTicks / TICKS_PER_SECOND
   };
 }

@@ -10,12 +10,24 @@ export type VidaaSubtitleBackground = 'shadow' | 'soft' | 'solid';
 export type VidaaSubtitlePosition = 'lower' | 'higher';
 export type VidaaControlTimeout = 0 | 3.5 | 6 | 10;
 export type VidaaSeekSeconds = 10 | 30 | 60;
+export type VidaaAudioProfile = 'tv-speakers' | 'earc' | 'custom';
+export type VidaaAudioCodec = 'ac3' | 'eac3' | 'truehd' | 'dts' | 'flac';
+
+export interface VidaaAudioCodecSettings {
+  ac3: boolean;
+  eac3: boolean;
+  truehd: boolean;
+  dts: boolean;
+  flac: boolean;
+}
 
 export interface VidaaPlayerSettings {
   version: 1;
   subtitlesEnabled: boolean;
   preferredSubtitleLanguage: string;
   preferredAudioLanguage: string;
+  audioProfile: VidaaAudioProfile;
+  audioCodecs: VidaaAudioCodecSettings;
   subtitleSize: VidaaSubtitleSize;
   subtitleColor: VidaaSubtitleColor;
   subtitleBackground: VidaaSubtitleBackground;
@@ -35,6 +47,14 @@ export const DEFAULT_VIDAA_PLAYER_SETTINGS: VidaaPlayerSettings = {
   subtitlesEnabled: true,
   preferredSubtitleLanguage: 'eng',
   preferredAudioLanguage: '',
+  audioProfile: 'tv-speakers',
+  audioCodecs: {
+    ac3: true,
+    eac3: true,
+    truehd: false,
+    dts: false,
+    flac: false
+  },
   subtitleSize: 'standard',
   subtitleColor: 'white',
   subtitleBackground: 'shadow',
@@ -67,6 +87,25 @@ const SEEK_SECONDS = new Set<VidaaSeekSeconds>([10, 30, 60]);
 const CONTROL_TIMEOUTS = new Set<VidaaControlTimeout>([0, 3.5, 6, 10]);
 const PLAYBACK_SPEEDS = new Set([0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]);
 const NEXT_COUNTDOWNS = new Set([5, 10, 15, 20, 30]);
+const AUDIO_PROFILES = new Set<VidaaAudioProfile>([
+  'tv-speakers',
+  'earc',
+  'custom'
+]);
+
+function audioCodecSettings(value: unknown): VidaaAudioCodecSettings {
+  const candidate = value && typeof value === 'object'
+    ? value as Partial<VidaaAudioCodecSettings>
+    : {};
+  const defaults = DEFAULT_VIDAA_PLAYER_SETTINGS.audioCodecs;
+  return {
+    ac3: typeof candidate.ac3 === 'boolean' ? candidate.ac3 : defaults.ac3,
+    eac3: typeof candidate.eac3 === 'boolean' ? candidate.eac3 : defaults.eac3,
+    truehd: typeof candidate.truehd === 'boolean' ? candidate.truehd : defaults.truehd,
+    dts: typeof candidate.dts === 'boolean' ? candidate.dts : defaults.dts,
+    flac: typeof candidate.flac === 'boolean' ? candidate.flac : defaults.flac
+  };
+}
 
 function language(value: unknown, fallback: string): string {
   if (typeof value !== 'string') return fallback;
@@ -91,6 +130,10 @@ export function parsePlayerSettings(value: unknown): VidaaPlayerSettings {
       candidate.preferredAudioLanguage,
       DEFAULT_VIDAA_PLAYER_SETTINGS.preferredAudioLanguage
     ),
+    audioProfile: AUDIO_PROFILES.has(candidate.audioProfile as VidaaAudioProfile)
+      ? candidate.audioProfile as VidaaAudioProfile
+      : DEFAULT_VIDAA_PLAYER_SETTINGS.audioProfile,
+    audioCodecs: audioCodecSettings(candidate.audioCodecs),
     subtitleSize: SUBTITLE_SIZES.has(candidate.subtitleSize as VidaaSubtitleSize)
       ? candidate.subtitleSize as VidaaSubtitleSize
       : DEFAULT_VIDAA_PLAYER_SETTINGS.subtitleSize,
@@ -207,5 +250,24 @@ export function preferredPlaybackTracks(
         options.defaultSubtitleIndex
       )
       : null
+  };
+}
+
+export function playbackAudioPreference(
+  settings: VidaaPlayerSettings
+): Pick<VidaaPlaybackRequest, 'audioProfile' | 'audioCodecs'> {
+  const codecs = settings.audioProfile === 'tv-speakers'
+    ? ['ac3', 'eac3'] satisfies VidaaAudioCodec[]
+    : settings.audioProfile === 'earc'
+      ? ['ac3', 'eac3', 'truehd', 'dts', 'flac'] satisfies VidaaAudioCodec[]
+      : (Object.entries(settings.audioCodecs) as Array<[
+          VidaaAudioCodec,
+          boolean
+        ]>)
+          .filter(([, enabled]) => enabled)
+          .map(([codec]) => codec);
+  return {
+    audioProfile: settings.audioProfile,
+    audioCodecs: codecs
   };
 }

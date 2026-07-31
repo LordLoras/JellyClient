@@ -18,6 +18,7 @@ import {
   Settings2,
   Square,
   Subtitles,
+  Volume2,
   Wifi,
   X
 } from 'lucide-react';
@@ -47,6 +48,7 @@ import { moveSpatialFocus } from './spatial-focus.js';
 import {
   DEFAULT_VIDAA_PLAYER_SETTINGS,
   loadPlayerSettings,
+  playbackAudioPreference,
   preferredPlaybackTracks,
   savePlayerSettings,
   type VidaaPlayerSettings
@@ -258,6 +260,51 @@ function SettingsSheet({ settings, onClose, onSave }: {
             </button>
           </section>
           <section>
+            <h3><Volume2 /> Audio output</h3>
+            <ChoiceGroup
+              choices={[
+                { value: 'tv-speakers', label: 'TV speakers' },
+                { value: 'earc', label: 'eARC system' },
+                { value: 'custom', label: 'Custom' }
+              ]}
+              label="Playback profile"
+              onChange={(value) => update('audioProfile', value)}
+              value={draft.audioProfile}
+            />
+            <p className="audio-profile-note">
+              {draft.audioProfile === 'tv-speakers'
+                ? 'Uses broadly compatible audio and lets Jellyfin convert unsupported tracks.'
+                : draft.audioProfile === 'earc'
+                  ? 'Advertises common lossless and immersive formats so the TV can forward original audio when its player accepts it.'
+                  : 'Advertises only the formats selected below. The TV still controls the physical eARC output.'}
+            </p>
+            {draft.audioProfile === 'custom' && (
+              <div className="audio-profile-codecs">
+                {([
+                  ['ac3', 'AC-3', 'Dolby Digital'],
+                  ['eac3', 'E-AC-3', 'Dolby Digital Plus / Atmos'],
+                  ['truehd', 'TrueHD', 'Dolby TrueHD / Atmos'],
+                  ['dts', 'DTS', 'DTS and DTS-HD family'],
+                  ['flac', 'FLAC', 'Lossless PCM-based audio']
+                ] as const).map(([codec, label, detail]) => (
+                  <button
+                    className={`settings-toggle${draft.audioCodecs[codec] ? ' is-selected' : ''}`}
+                    data-focusable
+                    key={codec}
+                    onClick={() => update('audioCodecs', {
+                      ...draft.audioCodecs,
+                      [codec]: !draft.audioCodecs[codec]
+                    })}
+                    type="button"
+                  >
+                    <span>{draft.audioCodecs[codec] ? <Check /> : null}</span>
+                    <div><strong>{label}</strong><small>{detail}</small></div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+          <section>
             <h3><Subtitles /> Subtitle appearance</h3>
             <ChoiceGroup
               choices={[
@@ -448,7 +495,7 @@ function PlaybackSheet({ options, settings, busy, error, onClose, onStart }: {
         {error && <div className="player-error"><CircleAlert /> {error}</div>}
         <footer>
           <p>Text, ASS, and SSA tracks are rendered by JellyClient. Bitmap PGS tracks are listed but cannot be selected yet.</p>
-          <button className="signal-button signal-button--primary" data-focusable disabled={busy} onClick={() => onStart({ mediaSourceId: sourceId, startPositionTicks: options.item.playbackPositionTicks, audioStreamIndex: audioIndex, subtitleStreamIndex: subtitleIndex, maxStreamingBitrate: maxBitrate })} type="button"><Play /> {busy ? 'Negotiating…' : options.item.playbackPositionTicks > 0 ? 'Resume' : 'Play'}</button>
+          <button className="signal-button signal-button--primary" data-focusable disabled={busy} onClick={() => onStart({ mediaSourceId: sourceId, startPositionTicks: options.item.playbackPositionTicks, audioStreamIndex: audioIndex, subtitleStreamIndex: subtitleIndex, maxStreamingBitrate: maxBitrate, ...playbackAudioPreference(settings) })} type="button"><Play /> {busy ? 'Negotiating…' : options.item.playbackPositionTicks > 0 ? 'Resume' : 'Play'}</button>
         </footer>
       </section>
     </div>
@@ -765,7 +812,8 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
             mediaSourceId: activePlan.mediaSourceId,
             startPositionTicks: Math.round(video.currentTime * TICKS_PER_SECOND),
             audioStreamIndex: nextAudioIndex,
-            subtitleStreamIndex: subtitleIndex
+            subtitleStreamIndex: subtitleIndex,
+            ...playbackAudioPreference(settings)
           } satisfies VidaaPlaybackRequest)
         }
       );
@@ -903,7 +951,13 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
         <span>{plan.container?.toUpperCase() ?? 'STREAM'}</span>
         <span>{plan.videoCodec?.toUpperCase() ?? 'VIDEO'}</span>
         <span>{plan.videoRange ?? 'SDR'}</span>
-        <span>{plan.audioCodec?.toUpperCase() ?? 'AUDIO'} {plan.audioLayout}</span>
+        <span>
+          {plan.audioCodec?.toUpperCase() ?? 'AUDIO'} {plan.audioLayout}
+          {plan.audioIsCopy
+            ? ' · ORIGINAL'
+            : ` → ${plan.audioOutputCodec?.toUpperCase() ?? 'CONVERTED'}`}
+        </span>
+        <span>{plan.audioProfile === 'earc' ? 'eARC PROFILE' : plan.audioProfile.replace('-', ' ')}</span>
       </aside>
       <footer>
         {(error || subtitleError) && <div className="player-error"><CircleAlert /> {error || subtitleError}</div>}
@@ -1121,7 +1175,8 @@ export function JellyfinApp() {
             startPositionTicks: 0,
             audioStreamIndex: tracks.audioStreamIndex,
             subtitleStreamIndex: tracks.subtitleStreamIndex,
-            maxStreamingBitrate: null
+            maxStreamingBitrate: null,
+            ...playbackAudioPreference(settings)
           } satisfies VidaaPlaybackRequest)
         }
       );

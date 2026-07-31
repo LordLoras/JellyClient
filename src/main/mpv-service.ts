@@ -9,6 +9,7 @@ import { app } from 'electron';
 import type {
   AppSettings,
   MediaItem,
+  MpvAudioDevice,
   MpvCapability,
   PlaybackDiagnostics,
   PlaybackState,
@@ -21,6 +22,12 @@ import {
   mpvLanguagePriority
 } from '@shared/subtitle-selection.js';
 import { ConfigService } from './config-service.js';
+import {
+  codecRequestsPassthrough,
+  isPassthroughOutputFormat,
+  mpvPassthroughCodecs,
+  parseMpvAudioDevices
+} from './audio-output.js';
 import { ClientEventBus } from './event-bus.js';
 import { userFacingError } from './errors.js';
 import { skipPromptAss } from './mpv-skip-overlay.js';
@@ -77,6 +84,8 @@ const OBSERVED_PROPERTIES = [
   'video-params',
   'video-target-params',
   'audio-out-params',
+  'audio-device',
+  'current-ao',
   'estimated-display-fps',
   'display-names',
   'current-vo',
@@ -108,6 +117,7 @@ export class MpvService extends EventEmitter {
   private pendingSubtitlePreference: MpvSubtitlePreference | null = null;
   private skipPromptLabel: string | null = null;
   private postPlayVisible = false;
+  private audioVerificationTimer: NodeJS.Timeout | null = null;
 
   constructor(config: ConfigService, events: ClientEventBus) {
     super();
@@ -162,6 +172,15 @@ export class MpvService extends EventEmitter {
         audioOutputFormat: null,
         audioOutputChannels: null,
         audioOutputSampleRate: null,
+        audioRequestedDevice: player.audioDevice || 'auto',
+        audioDriver: null,
+        audioOutputMode: player.audioOutputMode,
+        audioPassthroughCodecs:
+          player.audioOutputMode === 'passthrough'
+            ? mpvPassthroughCodecs(player.audioPassthrough)
+            : [],
+        audioPassthroughActive: false,
+        audioFallbackReason: null,
         cacheDurationSeconds: 0,
         droppedFrames: 0,
         ...diagnostics,
@@ -210,6 +229,16 @@ export class MpvService extends EventEmitter {
     return this.capability;
   }
 
+  async listAudioDevices(): Promise<MpvAudioDevice[]> {
+    const capability = this.capabilityValue.available
+      ? this.capabilityValue
+      : await this.probe();
+    if (!capability.available || !capability.executablePath) {
+      throw new Error(capability.error ?? 'MPV is unavailable.');
+    }
+    return this.readAudioDevices(capability.executablePath);
+  }
+
   async load(request: MpvLoadRequest): Promise<PlaybackState> {
     const capability = this.capabilityValue.available
       ? this.capabilityValue
@@ -218,6 +247,10 @@ export class MpvService extends EventEmitter {
       throw new Error(capability.error ?? 'MPV is unavailable.');
     }
 
+    if (this.audioVerificationTimer) {
+      clearTimeout(this.audioVerificationTimer);
+      this.audioVerificationTimer = null;
+    }
     const nextGeneration = this.stateValue.generation + 1;
     this.setState({
       ...this.stateValue,
@@ -437,6 +470,10 @@ export class MpvService extends EventEmitter {
 
   async shutdown(): Promise<void> {
     this.intentionalShutdown = true;
+    if (this.audioVerificationTimer) {
+      clearTimeout(this.audioVerificationTimer);
+      this.audioVerificationTimer = null;
+    }
     try {
       if (this.socket) await this.command(['quit']);
     } catch {
@@ -528,12 +565,22 @@ export class MpvService extends EventEmitter {
       `--gpu-api=${settings.player.gpuApi}`,
       `--hwdec=${settings.player.hardwareDecoding ? 'auto-safe' : 'no'}`,
       '--audio-client-name=JellyClient',
+      `--audio-device=${settings.player.audioDevice || 'auto'}`,
+      '--audio-channels=auto-safe',
       '--sub-auto=no',
       '--msg-level=all=warn',
       '--title=JellyClient',
       `--ontop=${settings.player.alwaysOnTop ? 'yes' : 'no'}`,
       `--input-ipc-server=${this.pipeName}`
     ];
+
+    const passthroughCodecs = settings.player.audioOutputMode === 'passthrough'
+      ? mpvPassthroughCodecs(settings.player.audioPassthrough)
+      : [];
+    args.push(
+      `--audio-spdif=${passthroughCodecs.join(',')}`,
+      `--audio-exclusive=${passthroughCodecs.length > 0 ? 'yes' : 'no'}`
+    );
 
     if (settings.player.autoEnableSubtitles) {
       args.push(
@@ -692,6 +739,7 @@ export class MpvService extends EventEmitter {
         error: null
       });
       this.emit('file-loaded', this.state);
+      this.scheduleAudioVerification(this.stateValue.generation);
       return;
     }
     if (message.event === 'playback-restart') {
@@ -869,10 +917,23 @@ export class MpvService extends EventEmitter {
                 ? params.channels
                 : null,
           audioOutputSampleRate:
-            typeof params.samplerate === 'number' ? params.samplerate : null
+            typeof params.samplerate === 'number' ? params.samplerate : null,
+          audioPassthroughActive: isPassthroughOutputFormat(
+            typeof params.format === 'string' ? params.format : null
+          )
         });
         break;
       }
+      case 'audio-device':
+        this.updateDiagnostics({
+          audioRequestedDevice: typeof value === 'string' ? value : 'auto'
+        });
+        break;
+      case 'current-ao':
+        this.updateDiagnostics({
+          audioDriver: typeof value === 'string' ? value : null
+        });
+        break;
       case 'estimated-display-fps':
         this.updateDiagnostics({
           displayFps: typeof value === 'number' ? value : 0
@@ -996,6 +1057,58 @@ export class MpvService extends EventEmitter {
     });
   }
 
+  private scheduleAudioVerification(generation: number): void {
+    if (this.audioVerificationTimer) clearTimeout(this.audioVerificationTimer);
+    this.audioVerificationTimer = setTimeout(() => {
+      this.audioVerificationTimer = null;
+      void this.verifyAudioOutput(generation);
+    }, 1_600);
+  }
+
+  private async verifyAudioOutput(generation: number): Promise<void> {
+    if (this.stateValue.generation !== generation || !this.socket) return;
+    const player = this.config.settings.player;
+    if (
+      player.audioOutputMode !== 'passthrough' ||
+      !codecRequestsPassthrough(
+        this.stateValue.diagnostics.audioCodec,
+        player.audioPassthrough
+      ) ||
+      !this.stateValue.tracks.some(
+        (track) => track.type === 'audio' && track.selected
+      )
+    ) {
+      return;
+    }
+
+    if (this.stateValue.diagnostics.audioPassthroughActive) return;
+    if (
+      this.stateValue.diagnostics.audioDriver &&
+      this.stateValue.diagnostics.audioOutputFormat
+    ) {
+      this.updateDiagnostics({
+        audioFallbackReason:
+          'The selected endpoint did not open the requested bitstream; MPV is outputting decoded PCM.'
+      });
+      return;
+    }
+
+    await this.command(['set_property', 'audio-spdif', '']).catch(() => undefined);
+    await this.command(['audio-reload']).catch(() => undefined);
+    this.updateDiagnostics({
+      audioPassthroughActive: false,
+      audioFallbackReason:
+        'Bitstream output did not initialize, so JellyClient reloaded the track as decoded PCM.'
+    });
+    this.events.emitClient({
+      type: 'notice',
+      data: {
+        level: 'warning',
+        message: 'Audio passthrough was unavailable. Playback continued with decoded PCM.'
+      }
+    });
+  }
+
   private numberOrNull(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
   }
@@ -1085,6 +1198,40 @@ export class MpvService extends EventEmitter {
           return;
         }
         resolve(output.split(/\r?\n/)[0]?.trim() || 'mpv');
+      });
+    });
+  }
+
+  private readAudioDevices(executablePath: string): Promise<MpvAudioDevice[]> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(
+        executablePath,
+        ['--no-config', '--audio-device=help'],
+        { windowsHide: true }
+      );
+      let output = '';
+      const timeout = setTimeout(() => {
+        child.kill();
+        reject(new Error('Timed out while MPV listed Windows audio devices.'));
+      }, 8_000);
+      child.stdout.on('data', (chunk: Buffer) => {
+        output += chunk.toString('utf8');
+      });
+      child.stderr.on('data', (chunk: Buffer) => {
+        output += chunk.toString('utf8');
+      });
+      child.once('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+      child.once('exit', (code) => {
+        clearTimeout(timeout);
+        const devices = parseMpvAudioDevices(output);
+        if (code !== 0 || devices.length === 0) {
+          reject(new Error('MPV did not report any Windows audio devices.'));
+          return;
+        }
+        resolve(devices);
       });
     });
   }

@@ -258,6 +258,7 @@ export function registerIpc(services: Services): () => void {
     return mpv.probe(!result.canceled ? selected : undefined);
   });
   handle('settings:probe-mpv', async () => mpv.probe());
+  handle('settings:list-audio-devices', async () => mpv.listAudioDevices());
   handle('settings:open-config', async () => {
     const result = await shell.openPath(dirname(config.path));
     if (result) throw new Error(result);

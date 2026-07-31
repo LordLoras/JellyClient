@@ -43,6 +43,7 @@ const api: JellyClientApi = {
   copyDebugReport: (report: string) =>
     ipcRenderer.invoke('diagnostics:copy', report),
   probeMpv: () => ipcRenderer.invoke('settings:probe-mpv'),
+  listAudioDevices: () => ipcRenderer.invoke('settings:list-audio-devices'),
   saveSettings: (settings: AppSettings) =>
     ipcRenderer.invoke('settings:save', settings),
   chooseMpv: () => ipcRenderer.invoke('settings:choose-mpv'),

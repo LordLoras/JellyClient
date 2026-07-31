@@ -15,7 +15,8 @@ export default defineConfig({
     setupFiles: ['./src/renderer/src/test/setup.ts'],
     include: [
       'src/**/*.test.{ts,tsx}',
-      'VIDAA/src/**/*.test.{ts,tsx}'
+      'VIDAA/src/**/*.test.{ts,tsx}',
+      'VIDAA/server/**/*.test.{ts,tsx}'
     ],
     coverage: {
       reporter: ['text', 'html']

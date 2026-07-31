@@ -28,6 +28,21 @@ export const settingsSchema = z.object({
     hdrMode: z.enum(['auto', 'passthrough', 'tone-map']),
     gpuApi: z.enum(['d3d11', 'vulkan']),
     hardwareDecoding: z.boolean(),
+    audioDevice: z.string().trim().min(1).max(1024).default('auto'),
+    audioOutputMode: z.enum(['pcm', 'passthrough']).default('pcm'),
+    audioPassthrough: z.object({
+      ac3: z.boolean().default(true),
+      eac3: z.boolean().default(true),
+      truehd: z.boolean().default(false),
+      dts: z.boolean().default(true),
+      dtsHd: z.boolean().default(false)
+    }).default({
+      ac3: true,
+      eac3: true,
+      truehd: false,
+      dts: true,
+      dtsHd: false
+    }),
     alwaysOnTop: z.boolean(),
     fullscreenOnPlay: z.boolean(),
     autoEnableSubtitles: z.boolean().default(true),

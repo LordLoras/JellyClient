@@ -10,6 +10,7 @@ import type {
 import {
   DEFAULT_VIDAA_PLAYER_SETTINGS,
   parsePlayerSettings,
+  playbackAudioPreference,
   preferredPlaybackTracks
 } from './player-settings.js';
 
@@ -113,5 +114,33 @@ describe('VIDAA player settings', () => {
       ...DEFAULT_VIDAA_PLAYER_SETTINGS,
       preferredAudioLanguage: 'eng'
     }).audioStreamIndex).toBe(9);
+  });
+
+  it('uses safe television audio defaults and expands the eARC profile', () => {
+    expect(playbackAudioPreference(DEFAULT_VIDAA_PLAYER_SETTINGS)).toEqual({
+      audioProfile: 'tv-speakers',
+      audioCodecs: ['ac3', 'eac3']
+    });
+    expect(playbackAudioPreference({
+      ...DEFAULT_VIDAA_PLAYER_SETTINGS,
+      audioProfile: 'earc'
+    })).toEqual({
+      audioProfile: 'earc',
+      audioCodecs: ['ac3', 'eac3', 'truehd', 'dts', 'flac']
+    });
+  });
+
+  it('keeps only explicitly enabled codecs in the custom audio profile', () => {
+    expect(playbackAudioPreference({
+      ...DEFAULT_VIDAA_PLAYER_SETTINGS,
+      audioProfile: 'custom',
+      audioCodecs: {
+        ac3: false,
+        eac3: true,
+        truehd: true,
+        dts: false,
+        flac: false
+      }
+    }).audioCodecs).toEqual(['eac3', 'truehd']);
   });
 });

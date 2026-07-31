@@ -225,7 +225,25 @@ export function PlaybackDiagnosticsPanel({
             ].filter(Boolean).join(' · ')}
           />
           <Fact
-            label="Windows output"
+            label="Requested mode"
+            value={
+              diagnostics.audioOutputMode === 'passthrough'
+                ? `Passthrough · ${diagnostics.audioPassthroughCodecs.join(', ') || 'no codecs enabled'}`
+                : 'Decoded PCM'
+            }
+            accent
+          />
+          <Fact
+            label="Requested device"
+            value={
+              diagnostics.audioRequestedDevice === 'auto'
+                ? 'Windows default'
+                : diagnostics.audioRequestedDevice
+            }
+          />
+          <Fact label="Audio driver" value={diagnostics.audioDriver} />
+          <Fact
+            label="Actual output"
             value={[
               diagnostics.audioOutputFormat,
               diagnostics.audioOutputChannels,
@@ -233,7 +251,14 @@ export function PlaybackDiagnosticsPanel({
                 ? `${diagnostics.audioOutputSampleRate} Hz`
                 : null
             ].filter(Boolean).join(' · ')}
+            signal={diagnostics.audioPassthroughActive}
           />
+          <Fact
+            label="Bitstream"
+            value={diagnostics.audioPassthroughActive ? 'Active' : 'Not active'}
+            signal={diagnostics.audioPassthroughActive}
+          />
+          <Fact label="Fallback" value={diagnostics.audioFallbackReason} />
         </DiagnosticGroup>
       </div>
 

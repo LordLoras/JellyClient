@@ -36,6 +36,7 @@ The result is written to `release/win-unpacked`. An installer is not required.
 
 More settings are described in [Configuration](docs/CONFIGURATION.md). Manual
 playback checks are listed in the [Windows test matrix](docs/TEST_MATRIX.md).
+Release changes are recorded in the [changelog](CHANGELOG.md).
 
 ## VIDAA
 

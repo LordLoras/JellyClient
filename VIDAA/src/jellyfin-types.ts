@@ -1,4 +1,8 @@
 import type { SkipSegment } from '../../src/shared/skip-segments.js';
+import type {
+  VidaaAudioCodec,
+  VidaaAudioProfile
+} from './player-settings.js';
 
 export interface VidaaJellyfinSession {
   connected: boolean;
@@ -106,6 +110,8 @@ export interface VidaaPlaybackRequest {
   audioStreamIndex: number | null;
   subtitleStreamIndex: number | null;
   maxStreamingBitrate?: number | null;
+  audioProfile?: VidaaAudioProfile;
+  audioCodecs?: VidaaAudioCodec[];
 }
 
 export type VidaaPlayMethod =
@@ -132,7 +138,10 @@ export interface VidaaPlaybackPlan {
   videoCodec: string | null;
   videoRange: string | null;
   audioCodec: string | null;
+  audioOutputCodec: string | null;
   audioLayout: string | null;
+  audioIsCopy: boolean;
+  audioProfile: VidaaAudioProfile;
   startPositionSeconds: number;
 }
 

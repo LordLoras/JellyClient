@@ -2843,6 +2843,105 @@ svg {
   border-left: 2px solid var(--cyan);
 }
 
+.settings-note--warning {
+  padding-left: 11px;
+  color: #efc9a5;
+  border-left: 2px solid #e7a35d;
+}
+
+.audio-routing {
+  align-items: start;
+}
+
+.audio-routing .field > small {
+  margin-top: 7px;
+  color: var(--quiet);
+  font-size: 8px;
+  line-height: 1.55;
+}
+
+.audio-codec-section {
+  padding-top: 19px;
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.audio-codec-section > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.audio-codec-section > div:first-child strong {
+  font-size: 10px;
+}
+
+.audio-codec-section > div:first-child small {
+  color: var(--quiet);
+  font-size: 8px;
+}
+
+.audio-codec-grid {
+  display: grid;
+  margin-top: 13px;
+  gap: 8px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.codec-toggle {
+  position: relative;
+  display: grid;
+  min-height: 76px;
+  padding: 13px;
+  gap: 10px;
+  align-items: end;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: rgba(0, 0, 0, 0.16);
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.codec-toggle input {
+  position: absolute;
+  opacity: 0;
+}
+
+.codec-toggle > span {
+  display: grid;
+  gap: 3px;
+}
+
+.codec-toggle strong {
+  font-size: 10px;
+}
+
+.codec-toggle small {
+  color: var(--quiet);
+  font-size: 7px;
+}
+
+.codec-toggle i {
+  width: fit-content;
+  padding: 3px 5px;
+  color: var(--quiet);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 850;
+  letter-spacing: 0.09em;
+}
+
+.codec-toggle--active {
+  border-color: rgba(220, 255, 86, 0.34);
+  background: linear-gradient(145deg, rgba(220, 255, 86, 0.07), rgba(0, 0, 0, 0.15));
+}
+
+.codec-toggle--active i {
+  color: var(--signal);
+  border-color: rgba(220, 255, 86, 0.28);
+}
+
 .config-path {
   display: block;
   padding: 12px;
@@ -3131,6 +3230,12 @@ svg {
   margin: 0;
   color: var(--quiet);
   font-size: 7px;
+}
+
+@media (max-width: 1180px) {
+  .audio-codec-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .scrub-preview {

@@ -5,8 +5,10 @@ import {
   FolderOpen,
   Gauge,
   MonitorUp,
+  RefreshCw,
   Save,
-  ShieldCheck
+  ShieldCheck,
+  Volume2
 } from 'lucide-react';
 import {
   useEffect,
@@ -14,6 +16,7 @@ import {
 } from 'react';
 import type {
   AppSettings,
+  MpvAudioDevice,
   MpvCapability
 } from '@shared/contracts.js';
 import { friendlyError } from '../format';
@@ -37,7 +40,44 @@ export function SettingsPage({
 }: Props) {
   const [draft, setDraft] = useState(settings);
   const [busy, setBusy] = useState(false);
+  const [audioDevices, setAudioDevices] = useState<MpvAudioDevice[]>([]);
+  const [audioDevicesBusy, setAudioDevicesBusy] = useState(false);
+  const [audioDevicesError, setAudioDevicesError] = useState<string | null>(null);
   useEffect(() => setDraft(settings), [settings]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!mpv.available) {
+      setAudioDevices([]);
+      return;
+    }
+    setAudioDevicesBusy(true);
+    setAudioDevicesError(null);
+    void window.jellyClient.listAudioDevices()
+      .then((devices) => {
+        if (!cancelled) setAudioDevices(devices);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setAudioDevicesError(friendlyError(error));
+      })
+      .finally(() => {
+        if (!cancelled) setAudioDevicesBusy(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mpv.available, mpv.executablePath]);
+
+  const refreshAudioDevices = async () => {
+    setAudioDevicesBusy(true);
+    setAudioDevicesError(null);
+    try {
+      setAudioDevices(await window.jellyClient.listAudioDevices());
+    } catch (error) {
+      setAudioDevicesError(friendlyError(error));
+    } finally {
+      setAudioDevicesBusy(false);
+    }
+  };
 
   const save = async () => {
     setBusy(true);
@@ -263,6 +303,150 @@ export function SettingsPage({
           </p>
         </section>
 
+        <section className="settings-card settings-card--full audio-settings">
+          <header>
+            <span className="icon-plate"><Volume2 /></span>
+            <div>
+              <h2>Audio output</h2>
+              <p>Choose the Windows endpoint and whether MPV decodes or forwards supported formats.</p>
+            </div>
+          </header>
+          <div className="settings-columns audio-routing">
+            <label className="field">
+              <span>Output device</span>
+              <div className="inline-field">
+                <select
+                  aria-label="Audio output device"
+                  value={draft.player.audioDevice}
+                  onChange={(event) => setDraft({
+                    ...draft,
+                    player: { ...draft.player, audioDevice: event.target.value }
+                  })}
+                >
+                  {!audioDevices.some((device) => device.id === draft.player.audioDevice) && (
+                    <option value={draft.player.audioDevice}>
+                      {draft.player.audioDevice === 'auto'
+                        ? 'Windows default'
+                        : 'Saved device · currently unavailable'}
+                    </option>
+                  )}
+                  {audioDevices.map((device) => (
+                    <option key={device.id} value={device.id}>
+                      {device.id === 'auto' ? 'Windows default' : device.description}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  aria-label="Refresh audio devices"
+                  className="button button--glass"
+                  disabled={!mpv.available || audioDevicesBusy}
+                  onClick={() => void refreshAudioDevices()}
+                >
+                  <RefreshCw /> {audioDevicesBusy ? 'Scanning…' : 'Refresh'}
+                </button>
+              </div>
+            </label>
+            <label className="field">
+              <span>Output mode</span>
+              <select
+                aria-label="Audio output mode"
+                value={draft.player.audioOutputMode}
+                onChange={(event) => setDraft({
+                  ...draft,
+                  player: {
+                    ...draft.player,
+                    audioOutputMode: event.target.value as AppSettings['player']['audioOutputMode']
+                  }
+                })}
+              >
+                <option value="pcm">Automatic / decoded PCM</option>
+                <option value="passthrough">Encoded passthrough</option>
+              </select>
+              <small>
+                PCM works with speakers, headphones, televisions, and most sound systems.
+                Passthrough is intended for HDMI devices that decode the selected formats.
+              </small>
+            </label>
+          </div>
+          {audioDevicesError && (
+            <p className="settings-note settings-note--warning">{audioDevicesError}</p>
+          )}
+          {draft.player.audioOutputMode === 'passthrough' && (
+            <div className="audio-codec-section">
+              <div>
+                <strong>Formats to forward</strong>
+                <small>Start conservatively. Unsupported formats automatically fall back to decoded PCM.</small>
+              </div>
+              <div className="audio-codec-grid">
+                <CodecToggle
+                  checked={draft.player.audioPassthrough.ac3}
+                  detail="Dolby Digital"
+                  label="AC-3"
+                  onChange={(value) => setDraft({
+                    ...draft,
+                    player: {
+                      ...draft.player,
+                      audioPassthrough: { ...draft.player.audioPassthrough, ac3: value }
+                    }
+                  })}
+                />
+                <CodecToggle
+                  checked={draft.player.audioPassthrough.eac3}
+                  detail="Dolby Digital Plus / Atmos"
+                  label="E-AC-3"
+                  onChange={(value) => setDraft({
+                    ...draft,
+                    player: {
+                      ...draft.player,
+                      audioPassthrough: { ...draft.player.audioPassthrough, eac3: value }
+                    }
+                  })}
+                />
+                <CodecToggle
+                  checked={draft.player.audioPassthrough.truehd}
+                  detail="Dolby TrueHD / Atmos"
+                  label="TrueHD"
+                  onChange={(value) => setDraft({
+                    ...draft,
+                    player: {
+                      ...draft.player,
+                      audioPassthrough: { ...draft.player.audioPassthrough, truehd: value }
+                    }
+                  })}
+                />
+                <CodecToggle
+                  checked={draft.player.audioPassthrough.dts}
+                  detail="DTS core"
+                  label="DTS"
+                  onChange={(value) => setDraft({
+                    ...draft,
+                    player: {
+                      ...draft.player,
+                      audioPassthrough: { ...draft.player.audioPassthrough, dts: value }
+                    }
+                  })}
+                />
+                <CodecToggle
+                  checked={draft.player.audioPassthrough.dtsHd}
+                  detail="DTS-HD MA / DTS:X"
+                  label="DTS-HD"
+                  onChange={(value) => setDraft({
+                    ...draft,
+                    player: {
+                      ...draft.player,
+                      audioPassthrough: { ...draft.player.audioPassthrough, dtsHd: value }
+                    }
+                  })}
+                />
+              </div>
+            </div>
+          )}
+          <p className="settings-note settings-note--signal">
+            For PC → TV → eARC soundbar, select the television’s HDMI audio endpoint.
+            The television remains responsible for forwarding the signal to the soundbar.
+          </p>
+        </section>
+
         <section className="settings-card settings-card--wide">
           <header>
             <span className="icon-plate"><Gauge /></span>
@@ -465,6 +649,30 @@ function Toggle({
       <span><strong>{label}</strong><small>{detail}</small></span>
       <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
       <i />
+    </label>
+  );
+}
+
+function CodecToggle({
+  label,
+  detail,
+  checked,
+  onChange
+}: {
+  label: string;
+  detail: string;
+  checked: boolean;
+  onChange(value: boolean): void;
+}) {
+  return (
+    <label className={`codec-toggle${checked ? ' codec-toggle--active' : ''}`}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span><strong>{label}</strong><small>{detail}</small></span>
+      <i>{checked ? 'ON' : 'OFF'}</i>
     </label>
   );
 }

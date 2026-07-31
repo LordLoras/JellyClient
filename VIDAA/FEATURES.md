@@ -23,6 +23,11 @@ Jellyfin.
 - Direct play supported files or ask Jellyfin to remux a compatible file into
   MP4 without re-encoding its video.
 - Allow audio conversion when required by the television.
+- Choose a TV-speaker, eARC, or custom audio compatibility profile.
+- Preserve AC-3, E-AC-3, TrueHD, DTS-family, or FLAC audio when the selected
+  profile advertises it and the VIDAA player accepts the negotiated stream.
+- Show whether Jellyfin kept the original audio or selected a converted output
+  codec.
 - Stop playback rather than silently request a video transcode when that would
   remove HDR10 or Dolby Vision.
 
@@ -60,6 +65,8 @@ Vision files.
 ## Current boundaries
 
 - Bitmap PGS subtitles are not rendered by the VIDAA client.
+- The browser cannot force the television's physical audio output. eARC,
+  passthrough, and speaker routing remain controlled by the TV settings.
 - SyncPlay is not implemented yet.
 - The PC companion server must remain running while the television uses the
   client.

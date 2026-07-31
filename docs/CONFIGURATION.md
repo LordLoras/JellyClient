@@ -30,6 +30,15 @@ The Jellyfin password is never written to either file.
       "hdrMode": "auto",
       "gpuApi": "d3d11",
       "hardwareDecoding": true,
+      "audioDevice": "auto",
+      "audioOutputMode": "pcm",
+      "audioPassthrough": {
+        "ac3": true,
+        "eac3": true,
+        "truehd": false,
+        "dts": true,
+        "dtsHd": false
+      },
       "alwaysOnTop": false,
       "fullscreenOnPlay": true
     },
@@ -66,6 +75,18 @@ Do not put a password or access token in either variable.
 - `tone-map` maps output to BT.709/gamma 2.2 while keeping an appropriate
   swapchain colorspace hint.
 
-For the Hisense HDMI path, begin with D3D11 + `auto` and Windows HDR enabled.
-Use the playback diagnostics to verify PQ input/output, BT.2020 primaries,
-hardware decode, display refresh, and dropped frames.
+Begin with D3D11 and `auto`. Use the playback diagnostics to verify PQ
+input/output, BT.2020 primaries, hardware decode, display refresh, and dropped
+frames.
+
+## Audio output
+
+- `audioDevice` is an MPV device identifier. Use `auto` for the current Windows
+  default or choose an endpoint from the Settings screen.
+- `pcm` decodes audio and uses the Windows endpoint's preferred channel layout.
+- `passthrough` forwards only the codecs enabled under `audioPassthrough`.
+
+For PC → TV → eARC soundbar connections, choose the television's HDMI endpoint.
+The television controls the final eARC route. If the endpoint does not accept a
+requested bitstream, JellyClient asks MPV to continue with decoded PCM and
+records the result in playback diagnostics.
