@@ -679,14 +679,25 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
     const video = videoRef.current;
     const segment = activeSkipSegmentRef.current;
     if (!video || !segment) return;
-    const targetSeconds = segment.endTicks / TICKS_PER_SECOND;
-    video.currentTime = Math.min(video.duration || Infinity, targetSeconds);
-    setPosition(targetSeconds);
     setDismissedSegmentIds((current) => {
       const next = new Set(current);
       next.add(segment.id);
       return next;
     });
+    if (segment.type === 'Outro' && plan.nextItem) {
+      if (!stoppedRef.current) {
+        stoppedRef.current = true;
+        report('stop');
+      }
+      onPlayNext(plan.nextItem);
+      return;
+    }
+    const requestedTarget = segment.endTicks / TICKS_PER_SECOND;
+    const targetSeconds = Number.isFinite(video.duration) && video.duration > 0
+      ? Math.min(requestedTarget, Math.max(0, video.duration - 0.25))
+      : requestedTarget;
+    video.currentTime = targetSeconds;
+    setPosition(targetSeconds);
     report('progress');
   }
 

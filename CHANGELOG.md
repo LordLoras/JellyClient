@@ -1,73 +1,38 @@
 # Changelog
 
-## 0.4.2 — 2026-07-31
-
-### Jellyfin stream loading
-
-- Fixed the MPV HTTP authorization field used for direct play, direct stream,
-  and transcoded Jellyfin URLs. The previous value omitted the
-  `Authorization:` field name, causing Jellyfin to return `400 Bad Request`
-  and MPV to report `loading failed`.
-- Disabled MPV's unrelated online-video fallback for Jellyfin media URLs.
-- Captured warning and error output from both MPV output streams and retained a
-  sanitized transport error alongside MPV's generic file error.
-- Added regression coverage for MPV HTTP header formatting, including duplicate
-  prefixes, line breaks, and missing values.
-
-## 0.4.1 — 2026-07-31
-
-### Playback reliability
-
-- Stopped automatic next-episode playback from advancing after MPV load,
-  decode, audio, or display errors.
-- Correlated MPV playlist entries with playback generations so events from a
-  replaced item cannot stop or advance the newly selected item.
-- Limited post-play countdowns to the currently loaded, active item and cleared
-  stale duration state before each load.
-- Preserved MPV's `file_error` message in the player state and copyable debug
-  report, and marked failed Jellyfin playback sessions as failed.
-- Kept fast asynchronous MPV failures from being overwritten by a later
-  loading state.
-- Made external-subtitle failures non-fatal to video playback and cleaned up a
-  failed MPV IPC startup before retrying.
-
-### Audio and VIDAA guards
-
-- Reapplied the selected Windows audio device and passthrough policy before
-  each item, including after a decoded-PCM fallback.
-- Reported a failed PCM retry as an error instead of claiming playback
-  continued successfully.
-- Prevented duplicate or failed VIDAA media endings from starting the next
-  episode and reported VIDAA media errors as failed stops.
-
-## 0.4.0 — 2026-07-31
+## 1.0.0 — 2026-07-31
 
 ### Windows
 
-- Added MPV audio-device discovery and output-device selection.
-- Added decoded PCM and optional encoded-passthrough modes.
-- Added individual AC-3, E-AC-3, TrueHD, DTS, and DTS-HD passthrough controls.
-- Added PCM fallback when a requested bitstream output cannot initialize.
-- Expanded playback diagnostics with the requested device, MPV audio driver,
-  actual output format, passthrough state, and fallback reason.
-- Added LAN server discovery and Jellyfin Quick Connect.
-- Added library filtering, sorting, favorites, watched-state controls, media
-  version selection, bitrate selection, chapters, and trickplay previews.
-- Added language preferences, per-series track memory, live timing controls,
-  automatic intro or ending skips, and cancelable next-episode playback.
+- Browse and search Jellyfin libraries, continue watching, view next episodes,
+  manage favorites and watched state, and choose media versions or tracks.
+- Play through MPV with direct-play support, HDR10 output controls, subtitle and
+  audio selection, audio-device routing, and optional encoded passthrough.
+- Create or join SyncPlay rooms directly in the app, with synchronized start,
+  pause, seek, resume, stop, buffering, and drift correction.
+- Show intro and ending prompts, use the `N` shortcut, and continue to the next
+  episode with a cancelable countdown.
+- Inspect playback and display information through the signal inspector,
+  copyable debug report, and MPV statistics overlay.
 
 ### VIDAA
 
-- Added TV-speaker, eARC, and custom audio compatibility profiles.
-- Added original-versus-converted audio information to the player overlay.
-- Added Quick Connect, complete library browsing, search, media-source and
-  bitrate selection, chapters, player settings, and post-play controls.
-- Kept HDR10 and Dolby Vision video conversion blocked when it would remove the
-  original HDR signal.
+- Run a television interface from a small LAN bridge with Quick Connect,
+  library browsing, search, playback options, and locally stored settings.
+- Use native television playback for compatible HDR10 and Dolby Vision files,
+  with selectable audio and text-subtitle tracks.
+- Use chapters, intro and ending skips, player controls, and next-episode
+  playback from the television interface.
 
-### Documentation and verification
+### Reliability
 
-- Split detailed Windows and VIDAA features into separate reference documents.
-- Added automated coverage for Windows MPV audio parsing and VIDAA audio-profile
-  negotiation.
-- Updated the portable Windows build and VIDAA production bundle.
+- Fixed Jellyfin authorization for MPV media requests that previously surfaced
+  as `loading failed`.
+- Fixed SyncPlay readiness so a room starts only after MPV has loaded the file
+  and settled into its requested initial state.
+- Prevented stale or duplicate playback events from advancing multiple episodes
+  after a failed or replaced item.
+- Kept ending skips inside a loaded file and advanced directly to the next
+  episode when one is available.
+- Added clear MPV command context to playback errors and blocked seeks before a
+  media file is ready.

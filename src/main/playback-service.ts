@@ -557,13 +557,8 @@ export class PlaybackService extends EventEmitter {
         active.dismissedSegmentIds
       )
       : null;
-    if (segment && this.shouldAutoSkip(segment.type)) {
-      active?.dismissedSegmentIds.add(segment.id);
-      if (active) active.promptSegmentId = null;
-      this.emit('segment-skip-requested', {
-        itemId: active?.itemId ?? '',
-        targetSeconds: segment.endTicks / TICKS_PER_SECOND
-      } satisfies SegmentSkipRequest);
+    if (active && segment && this.shouldAutoSkip(segment.type)) {
+      this.skipSegment(active, segment);
       return;
     }
     const segmentId = segment?.id ?? null;
@@ -581,12 +576,26 @@ export class PlaybackService extends EventEmitter {
       (candidate) => candidate.id === active.promptSegmentId
     );
     if (!segment) return;
+    this.skipSegment(active, segment);
+  }
+
+  private skipSegment(active: ActivePlayback, segment: SkipSegment): void {
     active.dismissedSegmentIds.add(segment.id);
     active.promptSegmentId = null;
     void this.mpv.setSkipPrompt(null).catch(() => undefined);
+    if (segment.type === MediaSegmentType.Outro && active.nextItem) {
+      this.requestPlayNext();
+      return;
+    }
+    if (!this.mpv.isMediaLoaded) return;
+    const requestedTarget = segment.endTicks / TICKS_PER_SECOND;
+    const duration = this.mpv.state.durationSeconds;
+    const targetSeconds = duration > 0
+      ? Math.min(requestedTarget, Math.max(0, duration - 0.25))
+      : requestedTarget;
     this.emit('segment-skip-requested', {
       itemId: active.itemId,
-      targetSeconds: segment.endTicks / TICKS_PER_SECOND
+      targetSeconds
     } satisfies SegmentSkipRequest);
   }
 

@@ -29,7 +29,7 @@ Build the app and create the unpacked executable:
 ```powershell
 pnpm test
 pnpm build
-pnpm package:win
+pnpm package:portable
 ```
 
 The result is written to `release/win-unpacked`. An installer is not required.

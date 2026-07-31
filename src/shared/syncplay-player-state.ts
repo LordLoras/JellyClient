@@ -14,10 +14,12 @@ const LOADING_STATUSES = new Set<PlaybackState['status']>([
 export function isSyncPlayPlayerReady(
   playback: PlaybackState,
   ipcConnected: boolean,
+  mediaLoaded: boolean,
   expectedItemId?: string | null
 ): boolean {
   return (
     ipcConnected &&
+    mediaLoaded &&
     Boolean(playback.item) &&
     (!expectedItemId || playback.item?.id === expectedItemId) &&
     READY_STATUSES.has(playback.status)

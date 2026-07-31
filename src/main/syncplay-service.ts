@@ -51,6 +51,14 @@ export class SyncPlayService {
   private lastBuffering: boolean | null = null;
   private queueLoadGeneration = 0;
   private speedResetTimer: NodeJS.Timeout | null = null;
+  private pendingCommand: SendCommand | null = null;
+  private lastCommandEmittedAtMs = 0;
+  private lastCommandKey: string | null = null;
+  private readyInFlight: Promise<void> | null = null;
+  private lastReadyRequest: {
+    playlistItemId: string;
+    sentAtMs: number;
+  } | null = null;
 
   constructor(
     jellyfin: JellyfinService,
@@ -285,6 +293,10 @@ export class SyncPlayService {
     this.cancelScheduledCommand();
     this.clearSpeedCorrection();
     this.lastBuffering = null;
+    this.pendingCommand = null;
+    this.lastCommandEmittedAtMs = 0;
+    this.lastCommandKey = null;
+    this.lastReadyRequest = null;
     this.setState(structuredClone(initialSyncPlayState));
   }
 
@@ -340,6 +352,7 @@ export class SyncPlayService {
           Reason?: string;
         };
         if (this.stateValue.currentGroup && data.State) {
+          if (data.State === 'Waiting') this.lastBuffering = null;
           this.setState({
             ...this.stateValue,
             currentGroup: {
@@ -377,10 +390,12 @@ export class SyncPlayService {
     const alreadyLoaded = isSyncPlayPlayerReady(
       this.mpv.state,
       this.mpv.isConnected,
+      this.mpv.isMediaLoaded,
       itemId
     );
     if (alreadyLoaded) {
       await this.sendReady();
+      this.flushPendingCommand();
       return;
     }
 
@@ -405,11 +420,14 @@ export class SyncPlayService {
           () => isSyncPlayPlayerReady(
             this.mpv.state,
             this.mpv.isConnected,
+            this.mpv.isMediaLoaded,
             itemId
           ),
           15_000,
           'MPV did not finish loading the SyncPlay item.'
         );
+        await this.sendReady();
+        this.flushPendingCommand();
       }
     } catch (error) {
       this.failProtocol(
@@ -423,9 +441,17 @@ export class SyncPlayService {
       !command.Command ||
       !command.When ||
       this.stateValue.membership !== 'joined' ||
-      (command.Command !== 'Stop' && !this.stateValue.playlistItemId) ||
       (command.GroupId &&
-        command.GroupId !== this.stateValue.currentGroup?.id) ||
+        command.GroupId !== this.stateValue.currentGroup?.id)
+    ) {
+      return;
+    }
+    if (command.Command !== 'Stop' && !this.stateValue.playlistItemId) {
+      this.retainPendingCommand(command);
+      return;
+    }
+    if (
+      command.Command !== 'Stop' &&
       !syncPlayCommandMatchesPlaylist(
         command.PlaylistItemId,
         this.stateValue.playlistItemId
@@ -433,6 +459,17 @@ export class SyncPlayService {
     ) {
       return;
     }
+    const emittedAt = this.commandTime(command);
+    if (emittedAt > 0 && emittedAt <= this.lastCommandEmittedAtMs) return;
+    const commandKey = [
+      command.Command,
+      command.PlaylistItemId ?? '',
+      command.When,
+      command.PositionTicks ?? 0
+    ].join('|');
+    if (commandKey === this.lastCommandKey) return;
+    this.lastCommandKey = commandKey;
+    if (emittedAt > 0) this.lastCommandEmittedAtMs = emittedAt;
     this.cancelScheduledCommand();
     const generation = ++this.commandGeneration;
     const serverTarget = Date.parse(command.When);
@@ -459,6 +496,7 @@ export class SyncPlayService {
         () => isSyncPlayPlayerReady(
           this.mpv.state,
           this.mpv.isConnected,
+          this.mpv.isMediaLoaded,
           this.stateValue.groupQueueItemId
         ),
         15_000,
@@ -536,11 +574,11 @@ export class SyncPlayService {
       isSyncPlayPlayerReady(
         playback,
         this.mpv.isConnected,
+        this.mpv.isMediaLoaded,
         this.stateValue.groupQueueItemId
       )
     ) {
       if (this.lastBuffering === false) return;
-      this.lastBuffering = false;
       await this.sendReady();
     }
   }
@@ -564,19 +602,37 @@ export class SyncPlayService {
       !isSyncPlayPlayerReady(
         this.mpv.state,
         this.mpv.isConnected,
+        this.mpv.isMediaLoaded,
         this.stateValue.groupQueueItemId
       )
     ) {
       return;
     }
+    if (this.lastBuffering === false) return;
+    if (this.readyInFlight) {
+      await this.readyInFlight;
+      return;
+    }
+    const playlistItemId = this.stateValue.playlistItemId;
+    const now = Date.now();
+    if (
+      this.lastReadyRequest?.playlistItemId === playlistItemId &&
+      now - this.lastReadyRequest.sentAtMs < 100
+    ) return;
+    this.lastReadyRequest = { playlistItemId, sentAtMs: now };
+    this.lastBuffering = false;
+    const request = getSyncPlayApi(this.jellyfin.api).syncPlayReady({
+      readyRequestDto: this.playbackRequest()
+    }).then(() => undefined);
+    this.readyInFlight = request;
     try {
-      await getSyncPlayApi(this.jellyfin.api).syncPlayReady({
-        readyRequestDto: this.playbackRequest()
-      });
-      this.lastBuffering = false;
+      await request;
     } catch {
       this.lastBuffering = null;
+      this.lastReadyRequest = null;
       // The server may have moved to another state before Ready arrived.
+    } finally {
+      if (this.readyInFlight === request) this.readyInFlight = null;
     }
   }
 
@@ -587,7 +643,7 @@ export class SyncPlayService {
     PlaylistItemId: string;
   } {
     return {
-      When: new Date().toISOString(),
+      When: new Date(Date.now() + this.stateValue.clockOffsetMs).toISOString(),
       PositionTicks: Math.round(
         this.mpv.state.positionSeconds * TICKS_PER_SECOND
       ),
@@ -621,7 +677,7 @@ export class SyncPlayService {
     try {
       await getSyncPlayApi(this.jellyfin.api).syncPlayPing({
         pingRequestDto: {
-          Ping: Math.round(best.roundTrip)
+          Ping: Math.round(best.roundTrip / 2)
         }
       });
     } catch {
@@ -657,6 +713,10 @@ export class SyncPlayService {
     this.cancelScheduledCommand();
     this.clearSpeedCorrection();
     this.lastBuffering = null;
+    this.pendingCommand = null;
+    this.lastCommandEmittedAtMs = 0;
+    this.lastCommandKey = null;
+    this.lastReadyRequest = null;
     this.setState({
       ...this.stateValue,
       membership: 'not-joined',
@@ -708,6 +768,27 @@ export class SyncPlayService {
       type: 'syncplay',
       data: this.state
     });
+  }
+
+  private retainPendingCommand(command: SendCommand): void {
+    if (
+      !this.pendingCommand ||
+      this.commandTime(command) >= this.commandTime(this.pendingCommand)
+    ) {
+      this.pendingCommand = command;
+    }
+  }
+
+  private flushPendingCommand(): void {
+    const command = this.pendingCommand;
+    if (!command) return;
+    this.pendingCommand = null;
+    this.processCommand(command);
+  }
+
+  private commandTime(command: SendCommand): number {
+    const value = Date.parse(command.EmittedAt ?? command.When ?? '');
+    return Number.isFinite(value) ? value : 0;
   }
 
   private serialize<T>(operation: () => Promise<T>): Promise<T> {

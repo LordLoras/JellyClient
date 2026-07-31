@@ -55,6 +55,7 @@ interface PendingCommand {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+  label: string;
 }
 
 export interface MpvLoadRequest {
@@ -128,6 +129,11 @@ export class MpvService extends EventEmitter {
   private audioVerificationTimer: NodeJS.Timeout | null = null;
   private readonly playbackGenerations = new MpvPlaybackGenerationTracker();
   private lastMpvError: string | null = null;
+  private loadedGeneration: number | null = null;
+  private pendingInitialPause: {
+    generation: number;
+    paused: boolean;
+  } | null = null;
 
   constructor(config: ConfigService, events: ClientEventBus) {
     super();
@@ -145,6 +151,10 @@ export class MpvService extends EventEmitter {
 
   get isConnected(): boolean {
     return Boolean(this.socket && !this.socket.destroyed);
+  }
+
+  get isMediaLoaded(): boolean {
+    return this.loadedGeneration === this.stateValue.generation;
   }
 
   setMediaMetadata(
@@ -263,6 +273,11 @@ export class MpvService extends EventEmitter {
     }
     const nextGeneration = this.stateValue.generation + 1;
     this.lastMpvError = null;
+    this.loadedGeneration = null;
+    this.pendingInitialPause = {
+      generation: nextGeneration,
+      paused: request.paused
+    };
     this.setState({
       ...this.stateValue,
       status: 'starting',
@@ -305,6 +320,9 @@ export class MpvService extends EventEmitter {
       await this.command(loadCommand);
     } catch (error) {
       this.playbackGenerations.abandonLoad(nextGeneration);
+      if (this.pendingInitialPause?.generation === nextGeneration) {
+        this.pendingInitialPause = null;
+      }
       const message = userFacingError(error, 'Unknown MPV error');
       this.fail(`MPV could not start playback: ${message}`);
       throw error;
@@ -356,6 +374,8 @@ export class MpvService extends EventEmitter {
   }
 
   async stop(): Promise<PlaybackState> {
+    this.loadedGeneration = null;
+    this.pendingInitialPause = null;
     if (this.socket) await this.command(['stop']);
     this.setState({
       ...this.stateValue,
@@ -367,6 +387,9 @@ export class MpvService extends EventEmitter {
   }
 
   async seek(positionSeconds: number): Promise<PlaybackState> {
+    if (!this.isMediaLoaded) {
+      throw new Error('MPV cannot seek before a media file is loaded.');
+    }
     await this.command(['seek', Math.max(0, positionSeconds), 'absolute+exact']);
     return this.state;
   }
@@ -705,6 +728,7 @@ export class MpvService extends EventEmitter {
       return Promise.reject(new Error('MPV IPC is not connected.'));
     }
     const requestId = this.nextRequestId++;
+    const label = typeof command[0] === 'string' ? command[0] : 'command';
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
@@ -713,7 +737,8 @@ export class MpvService extends EventEmitter {
       this.pending.set(requestId, {
         resolve,
         reject,
-        timer
+        timer,
+        label
       });
       this.socket!.write(`${JSON.stringify({
         command,
@@ -746,7 +771,7 @@ export class MpvService extends EventEmitter {
         clearTimeout(pending.timer);
         this.pending.delete(message.request_id);
         if (message.error && message.error !== 'success') {
-          pending.reject(new Error(`MPV: ${message.error}`));
+          pending.reject(new Error(`MPV ${pending.label}: ${message.error}`));
         } else {
           pending.resolve(message.data);
         }
@@ -803,14 +828,7 @@ export class MpvService extends EventEmitter {
         this.emit('file-loaded', event satisfies MpvFileEvent);
         return;
       }
-      this.setState({
-        ...this.stateValue,
-        status: this.stateValue.paused ? 'paused' : 'playing',
-        buffering: false,
-        error: null
-      });
-      this.emit('file-loaded', event satisfies MpvFileEvent);
-      this.scheduleAudioVerification(this.stateValue.generation);
+      void this.finishFileLoaded(event);
       return;
     }
     if (message.event === 'playback-restart') {
@@ -833,6 +851,8 @@ export class MpvService extends EventEmitter {
       };
       const isCurrent = event.generation === this.stateValue.generation;
       if (isCurrent && event.reason !== 'redirect') {
+        this.loadedGeneration = null;
+        this.pendingInitialPause = null;
         if (this.audioVerificationTimer) {
           clearTimeout(this.audioVerificationTimer);
           this.audioVerificationTimer = null;
@@ -908,10 +928,13 @@ export class MpvService extends EventEmitter {
         break;
       case 'pause': {
         const paused = Boolean(value);
+        const loading = !this.isMediaLoaded ||
+          this.stateValue.status === 'starting' ||
+          this.stateValue.status === 'loading';
         this.patchState({
           paused,
           status:
-            this.stateValue.status === 'loading'
+            loading
               ? this.stateValue.status
               : paused
                 ? 'paused'
@@ -921,9 +944,14 @@ export class MpvService extends EventEmitter {
       }
       case 'paused-for-cache': {
         const buffering = Boolean(value);
+        const loading = !this.isMediaLoaded ||
+          this.stateValue.status === 'starting' ||
+          this.stateValue.status === 'loading';
         this.patchState({
           buffering,
-          status: buffering
+          status: loading
+            ? this.stateValue.status
+            : buffering
             ? 'buffering'
             : this.stateValue.paused
               ? 'paused'
@@ -1287,6 +1315,8 @@ export class MpvService extends EventEmitter {
   }
 
   private fail(message: string): void {
+    this.loadedGeneration = null;
+    this.pendingInitialPause = null;
     this.setState({
       ...this.stateValue,
       status: 'error',
@@ -1297,6 +1327,8 @@ export class MpvService extends EventEmitter {
   }
 
   private closeSocket(): void {
+    this.loadedGeneration = null;
+    this.pendingInitialPause = null;
     if (this.socket) {
       this.socket.removeAllListeners();
       this.socket.destroy();
@@ -1310,6 +1342,35 @@ export class MpvService extends EventEmitter {
     this.skipPromptLabel = null;
     this.postPlayVisible = false;
     this.playbackGenerations.reset();
+  }
+
+  private async finishFileLoaded(event: MpvFileEvent): Promise<void> {
+    const pendingPause = this.pendingInitialPause;
+    if (
+      event.generation !== this.stateValue.generation ||
+      pendingPause?.generation !== event.generation
+    ) return;
+    try {
+      await this.command(['set_property', 'pause', pendingPause.paused]);
+    } catch (error) {
+      if (event.generation !== this.stateValue.generation) return;
+      this.fail(
+        `MPV could not finish preparing playback: ${userFacingError(error, 'Unknown MPV error')}`
+      );
+      return;
+    }
+    if (event.generation !== this.stateValue.generation) return;
+    this.loadedGeneration = event.generation;
+    this.pendingInitialPause = null;
+    this.setState({
+      ...this.stateValue,
+      paused: pendingPause.paused,
+      status: pendingPause.paused ? 'paused' : 'playing',
+      buffering: false,
+      error: null
+    });
+    this.emit('file-loaded', event satisfies MpvFileEvent);
+    this.scheduleAudioVerification(event.generation);
   }
 
   private async candidatePaths(overridePath?: string): Promise<string[]> {

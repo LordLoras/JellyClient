@@ -45,7 +45,7 @@ describe('SyncPlay player readiness', () => {
       status: 'stopped' as const
     };
 
-    expect(isSyncPlayPlayerReady(playback, false, item.id)).toBe(false);
+    expect(isSyncPlayPlayerReady(playback, false, false, item.id)).toBe(false);
   });
 
   it('does not report ready while MPV is starting or loading', () => {
@@ -59,8 +59,8 @@ describe('SyncPlay player readiness', () => {
       status: 'loading' as const
     };
 
-    expect(isSyncPlayPlayerReady(starting, true, item.id)).toBe(false);
-    expect(isSyncPlayPlayerReady(loading, true, item.id)).toBe(false);
+    expect(isSyncPlayPlayerReady(starting, true, false, item.id)).toBe(false);
+    expect(isSyncPlayPlayerReady(loading, true, false, item.id)).toBe(false);
     expect(isSyncPlayPlayerLoading(starting)).toBe(true);
     expect(isSyncPlayPlayerLoading(loading)).toBe(true);
   });
@@ -72,9 +72,10 @@ describe('SyncPlay player readiness', () => {
       status: 'paused' as const
     };
 
-    expect(isSyncPlayPlayerReady(playback, true, item.id)).toBe(true);
-    expect(isSyncPlayPlayerReady(playback, true, 'movie-2')).toBe(false);
-    expect(isSyncPlayPlayerReady(playback, false, item.id)).toBe(false);
+    expect(isSyncPlayPlayerReady(playback, true, true, item.id)).toBe(true);
+    expect(isSyncPlayPlayerReady(playback, true, false, item.id)).toBe(false);
+    expect(isSyncPlayPlayerReady(playback, true, true, 'movie-2')).toBe(false);
+    expect(isSyncPlayPlayerReady(playback, false, true, item.id)).toBe(false);
   });
 
   it('rejects commands for a missing or different playlist item', () => {

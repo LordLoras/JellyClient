@@ -155,4 +155,84 @@ describe('MPV lifecycle events', () => {
       ['Authorization: MediaBrowser Client="test"']
     ]);
   });
+
+  it('does not report playback as ready from transient pause changes during load', () => {
+    const service = new MpvService(
+      { settings: structuredClone(defaultSettings) } as never,
+      { emitClient: vi.fn() } as never
+    );
+    const internal = service as unknown as {
+      stateValue: typeof initialPlaybackState;
+      onMessage(message: Record<string, unknown>): void;
+    };
+    internal.stateValue = {
+      ...structuredClone(initialPlaybackState),
+      generation: 4,
+      status: 'starting',
+      paused: true
+    };
+
+    internal.onMessage({
+      event: 'property-change',
+      name: 'pause',
+      data: false
+    });
+
+    expect(service.state.status).toBe('starting');
+    expect(service.state.paused).toBe(false);
+    expect(service.isMediaLoaded).toBe(false);
+  });
+
+  it('reapplies the requested pause state before declaring a file loaded', async () => {
+    const service = new MpvService(
+      { settings: structuredClone(defaultSettings) } as never,
+      { emitClient: vi.fn() } as never
+    );
+    const internal = service as unknown as {
+      stateValue: typeof initialPlaybackState;
+      loadedGeneration: number | null;
+      pendingInitialPause: { generation: number; paused: boolean } | null;
+      playbackGenerations: {
+        beginLoad(generation: number): void;
+      };
+      command(command: unknown[]): Promise<unknown>;
+      onMessage(message: Record<string, unknown>): void;
+    };
+    internal.stateValue = {
+      ...structuredClone(initialPlaybackState),
+      generation: 5,
+      status: 'loading',
+      paused: false
+    };
+    internal.loadedGeneration = null;
+    internal.pendingInitialPause = { generation: 5, paused: true };
+    internal.command = vi.fn(async () => null);
+    internal.playbackGenerations.beginLoad(5);
+    internal.onMessage({ event: 'start-file', playlist_entry_id: 52 });
+
+    const loaded = vi.fn();
+    service.on('file-loaded', loaded);
+    internal.onMessage({ event: 'file-loaded', playlist_entry_id: 52 });
+
+    await vi.waitFor(() => expect(loaded).toHaveBeenCalledOnce());
+    expect(internal.command).toHaveBeenCalledWith([
+      'set_property',
+      'pause',
+      true
+    ]);
+    expect(service.state.status).toBe('paused');
+    expect(service.state.paused).toBe(true);
+    expect(service.isMediaLoaded).toBe(true);
+  });
+
+  it('rejects seek before MPV has loaded a media file', async () => {
+    const service = new MpvService(
+      { settings: structuredClone(defaultSettings) } as never,
+      { emitClient: vi.fn() } as never
+    );
+
+    await expect(service.seek(10)).rejects.toThrow(
+      'MPV cannot seek before a media file is loaded.'
+    );
+  });
 });

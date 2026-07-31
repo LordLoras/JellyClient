@@ -1,11 +1,15 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
+import { MediaSegmentType } from '@jellyfin/sdk/lib/generated-client/models/media-segment-type.js';
 import { defaultSettings, initialPlaybackState } from '../shared/defaults.js';
+import type { PlaybackState } from '../shared/contracts.js';
+import type { SkipSegment } from '../shared/skip-segments.js';
 import { PlaybackService } from './playback-service.js';
 import type { MpvEndFileEvent } from './playback-lifecycle.js';
 
 class FakeMpv extends EventEmitter {
   state = structuredClone(initialPlaybackState);
+  isMediaLoaded = true;
   setPostPlayPrompt = vi.fn(async () => undefined);
   setSkipPrompt = vi.fn(async () => undefined);
 }
@@ -34,10 +38,10 @@ function subject() {
     initialAudioIndex: null,
     initialSubtitleIndex: null,
     playlistItemId: null,
-    segments: [],
+    segments: [] as SkipSegment[],
     dismissedSegmentIds: new Set<string>(),
-    promptSegmentId: null,
-    nextItem: { id: 'episode-2' },
+    promptSegmentId: null as string | null,
+    nextItem: { id: 'episode-2' } as PlaybackState['nextItem'],
     postPlayCanceled: false,
     playNextRequested: false
   };
@@ -101,5 +105,50 @@ describe('PlaybackService end-file handling', () => {
 
     expect(requests).not.toHaveBeenCalled();
     expect(active.stopped).toBe(false);
+  });
+});
+
+describe('PlaybackService ending skips', () => {
+  it('starts the next episode instead of seeking to the exact end of the file', () => {
+    const { active, mpv, playback } = subject();
+    const nextRequests = vi.fn();
+    const seekRequests = vi.fn();
+    playback.on('play-next-requested', nextRequests);
+    playback.on('segment-skip-requested', seekRequests);
+    active.segments = [{
+      id: 'outro-1',
+      type: MediaSegmentType.Outro,
+      startTicks: 900_000_000,
+      endTicks: 1_000_000_000
+    }];
+    active.promptSegmentId = 'outro-1';
+    mpv.state.durationSeconds = 100;
+
+    mpv.emit('skip-segment');
+
+    expect(nextRequests).toHaveBeenCalledOnce();
+    expect(seekRequests).not.toHaveBeenCalled();
+  });
+
+  it('keeps an ending seek inside the loaded file when there is no next item', () => {
+    const { active, mpv, playback } = subject();
+    const seekRequests = vi.fn();
+    playback.on('segment-skip-requested', seekRequests);
+    active.nextItem = null;
+    active.segments = [{
+      id: 'outro-1',
+      type: MediaSegmentType.Outro,
+      startTicks: 900_000_000,
+      endTicks: 1_000_000_000
+    }];
+    active.promptSegmentId = 'outro-1';
+    mpv.state.durationSeconds = 100;
+
+    mpv.emit('skip-segment');
+
+    expect(seekRequests).toHaveBeenCalledWith({
+      itemId: 'episode-1',
+      targetSeconds: 99.75
+    });
   });
 });
