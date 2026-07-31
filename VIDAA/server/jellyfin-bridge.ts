@@ -37,7 +37,7 @@ import {
 const VIDAA_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const DEFAULT_SESSION_PATH = resolve(VIDAA_ROOT, 'jellyfin.local.json');
 const CLIENT_NAME = 'JellyClient VIDAA';
-const CLIENT_VERSION = '0.4.1';
+const CLIENT_VERSION = '0.4.2';
 const TICKS_PER_SECOND = 10_000_000;
 const TEXT_SUBTITLE_CODECS = new Set([
   'ass',

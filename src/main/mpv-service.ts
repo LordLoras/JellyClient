@@ -37,6 +37,7 @@ import {
   type MpvEndFileEvent,
   type MpvFileEvent
 } from './playback-lifecycle.js';
+import { mpvAuthorizationHeaderField } from './mpv-http.js';
 
 interface MpvMessage {
   request_id?: number;
@@ -280,7 +281,7 @@ export class MpvService extends EventEmitter {
       await this.command([
         'set_property',
         'http-header-fields',
-        [request.authorizationHeader]
+        [mpvAuthorizationHeaderField(request.authorizationHeader)]
       ]);
       await this.command(['set_property', 'force-media-title', request.title]);
       await this.command(['set_property', 'fullscreen', request.fullscreen]);
@@ -548,16 +549,19 @@ export class MpvService extends EventEmitter {
         });
       }
     });
-    child.stderr.on('data', (chunk: Buffer) => {
+    const captureOutput = (chunk: Buffer): void => {
       const message = chunk.toString('utf8').trim();
-      if (/fatal|error/i.test(message)) {
-        const matchingLine = message
-          .split(/\r?\n/)
-          .reverse()
-          .find((line) => /fatal|error|failed/i.test(line));
-        this.lastMpvError = (matchingLine ?? message).slice(0, 300);
-      }
-    });
+      if (!/fatal|error|failed/i.test(message)) return;
+      const lines = message
+        .split(/\r?\n/)
+        .filter((line) => /fatal|error|failed/i.test(line));
+      const matchingLine = [...lines]
+        .reverse()
+        .find((line) => /http.*error/i.test(line)) ?? lines.at(-1) ?? message;
+      this.lastMpvError = this.sanitizeMpvError(matchingLine).slice(0, 300);
+    };
+    child.stdout.on('data', captureOutput);
+    child.stderr.on('data', captureOutput);
 
     try {
       await this.connectPipe();
@@ -618,6 +622,7 @@ export class MpvService extends EventEmitter {
       `--audio-device=${settings.player.audioDevice || 'auto'}`,
       '--audio-channels=auto-safe',
       '--sub-auto=no',
+      '--ytdl=no',
       '--msg-level=all=warn',
       '--title=JellyClient',
       `--ontop=${settings.player.alwaysOnTop ? 'yes' : 'no'}`,
@@ -839,7 +844,11 @@ export class MpvService extends EventEmitter {
           event.reason === 'error'
         ).catch(() => undefined);
         if (event.reason === 'error') {
-          const detail = event.error ?? this.lastMpvError;
+          const detail = [...new Set(
+            [event.error, this.lastMpvError].filter(
+              (value): value is string => Boolean(value)
+            )
+          )].join(' · ');
           const errorMessage = detail
             ? `MPV could not play this item: ${detail}`
             : 'MPV could not play this item.';
@@ -869,6 +878,13 @@ export class MpvService extends EventEmitter {
 
   private mpvEventError(error: string | undefined): string | null {
     return error && error !== 'success' ? error : null;
+  }
+
+  private sanitizeMpvError(message: string): string {
+    return message
+      .replace(/Authorization:.*$/gi, 'Authorization: [redacted]')
+      .replace(/Token=(?:\\?"|%22)[^"%]+(?:\\?"|%22)/gi, 'Token="[redacted]"')
+      .replace(/([?&](?:PlaySessionId|api_key)=)[^&\s]+/gi, '$1[redacted]');
   }
 
   private onProperty(name: string, value: unknown): void {

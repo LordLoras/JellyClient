@@ -149,5 +149,10 @@ describe('MPV lifecycle events', () => {
 
     expect(state.status).toBe('error');
     expect(state.error).toContain('loading failed');
+    expect(internal.command).toHaveBeenCalledWith([
+      'set_property',
+      'http-header-fields',
+      ['Authorization: MediaBrowser Client="test"']
+    ]);
   });
 });

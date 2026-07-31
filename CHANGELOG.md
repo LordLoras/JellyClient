@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.2 — 2026-07-31
+
+### Jellyfin stream loading
+
+- Fixed the MPV HTTP authorization field used for direct play, direct stream,
+  and transcoded Jellyfin URLs. The previous value omitted the
+  `Authorization:` field name, causing Jellyfin to return `400 Bad Request`
+  and MPV to report `loading failed`.
+- Disabled MPV's unrelated online-video fallback for Jellyfin media URLs.
+- Captured warning and error output from both MPV output streams and retained a
+  sanitized transport error alongside MPV's generic file error.
+- Added regression coverage for MPV HTTP header formatting, including duplicate
+  prefixes, line breaks, and missing values.
+
 ## 0.4.1 — 2026-07-31
 
 ### Playback reliability
