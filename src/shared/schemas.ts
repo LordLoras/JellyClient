@@ -14,6 +14,14 @@ export const connectionInputSchema = serverProfileSchema.extend({
   rememberSession: z.boolean()
 });
 
+export const serverAddressSchema = serverProfileSchema.omit({
+  username: true
+});
+
+export const quickConnectStartInputSchema = serverAddressSchema.extend({
+  rememberSession: z.boolean()
+});
+
 export const settingsSchema = z.object({
   player: z.object({
     mpvPath: z.string().max(4096),
@@ -23,7 +31,26 @@ export const settingsSchema = z.object({
     alwaysOnTop: z.boolean(),
     fullscreenOnPlay: z.boolean(),
     autoEnableSubtitles: z.boolean().default(true),
-    preferredSubtitleLanguage: z.string().trim().min(2).max(35).default('eng')
+    preferredAudioLanguage: z.string().trim().min(2).max(35).default('eng'),
+    preferredSubtitleLanguage: z.string().trim().min(2).max(35).default('eng'),
+    preferForcedSubtitles: z.boolean().default(false),
+    avoidSdhSubtitles: z.boolean().default(false),
+    rememberSeriesPreferences: z.boolean().default(true),
+    seriesPreferences: z.record(
+      z.string().min(1).max(100),
+      z.object({
+        audioLanguage: z.string().min(2).max(35).nullable(),
+        subtitleLanguage: z.string().min(2).max(35).nullable(),
+        subtitlesEnabled: z.boolean()
+      })
+    ).default({}),
+    playbackSpeed: z.number().min(0.25).max(4).default(1),
+    subtitleDelaySeconds: z.number().min(-30).max(30).default(0),
+    audioDelaySeconds: z.number().min(-30).max(30).default(0),
+    autoSkipIntro: z.boolean().default(false),
+    autoSkipOutro: z.boolean().default(false),
+    autoPlayNext: z.boolean().default(true),
+    nextEpisodeCountdownSeconds: z.number().int().min(3).max(60).default(10)
   }),
   syncPlay: z.object({
     autoJoinUnambiguousCast: z.boolean(),
@@ -37,12 +64,24 @@ export const catalogQuerySchema = z.object({
   searchTerm: z.string().max(200),
   startIndex: z.number().int().min(0),
   limit: z.number().int().min(1).max(200),
-  includeItemTypes: z.array(z.string()).max(30)
+  includeItemTypes: z.array(z.string()).max(30),
+  sortBy: z.enum([
+    'SortName',
+    'DateCreated',
+    'PremiereDate',
+    'ProductionYear',
+    'CommunityRating',
+    'Runtime'
+  ]).optional(),
+  sortDescending: z.boolean().optional(),
+  filter: z.enum(['all', 'unplayed', 'played', 'favorite']).optional()
 });
 
 export const playMediaInputSchema = z.object({
   itemId: z.string().min(1).max(100),
   startPositionTicks: z.number().int().min(0),
+  mediaSourceId: z.string().min(1).max(200).nullable().default(null),
+  maxStreamingBitrate: z.number().int().min(1_000_000).max(1_000_000_000).nullable().default(null),
   audioStreamIndex: z.number().int().nullable(),
   subtitleStreamIndex: z.number().int().nullable()
 });

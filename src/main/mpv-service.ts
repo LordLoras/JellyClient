@@ -12,6 +12,7 @@ import type {
   MpvCapability,
   PlaybackDiagnostics,
   PlaybackState,
+  TrickplayOption,
   TrackInfo
 } from '@shared/contracts.js';
 import { initialPlaybackState } from '@shared/defaults.js';
@@ -23,6 +24,7 @@ import { ConfigService } from './config-service.js';
 import { ClientEventBus } from './event-bus.js';
 import { userFacingError } from './errors.js';
 import { skipPromptAss } from './mpv-skip-overlay.js';
+import { postPlayAss } from './mpv-postplay-overlay.js';
 
 interface MpvMessage {
   request_id?: number;
@@ -68,6 +70,9 @@ const OBSERVED_PROPERTIES = [
   'volume',
   'mute',
   'fullscreen',
+  'speed',
+  'sub-delay',
+  'audio-delay',
   'track-list',
   'video-params',
   'video-target-params',
@@ -102,6 +107,7 @@ export class MpvService extends EventEmitter {
   private intentionalShutdown = false;
   private pendingSubtitlePreference: MpvSubtitlePreference | null = null;
   private skipPromptLabel: string | null = null;
+  private postPlayVisible = false;
 
   constructor(config: ConfigService, events: ClientEventBus) {
     super();
@@ -124,7 +130,10 @@ export class MpvService extends EventEmitter {
   setMediaMetadata(
     item: MediaItem,
     diagnostics: Partial<PlaybackDiagnostics>,
-    subtitlePreference: MpvSubtitlePreference
+    subtitlePreference: MpvSubtitlePreference,
+    chapters: PlaybackState['chapters'] = [],
+    nextItem: MediaItem | null = null,
+    trickplay: TrickplayOption[] = []
   ): PlaybackState {
     this.pendingSubtitlePreference = subtitlePreference;
     const player = this.config.settings.player;
@@ -132,6 +141,12 @@ export class MpvService extends EventEmitter {
       ...this.stateValue,
       item,
       tracks: [],
+      chapters,
+      trickplay,
+      currentChapterIndex: null,
+      nextItem,
+      postPlaySecondsRemaining: null,
+      postPlayCanceled: false,
       diagnostics: {
         ...this.stateValue.diagnostics,
         outputPrimaries: null,
@@ -216,6 +231,7 @@ export class MpvService extends EventEmitter {
 
     await this.ensureRunning(capability.executablePath);
     await this.setSkipPrompt(null);
+    await this.setPostPlayPrompt(this.stateValue.nextItem, null, false);
     await this.command([
       'set_property',
       'http-header-fields',
@@ -224,6 +240,10 @@ export class MpvService extends EventEmitter {
     await this.command(['set_property', 'force-media-title', request.title]);
     await this.command(['set_property', 'fullscreen', request.fullscreen]);
     await this.command(['set_property', 'pause', request.paused]);
+    const player = this.config.settings.player;
+    await this.command(['set_property', 'speed', player.playbackSpeed]);
+    await this.command(['set_property', 'sub-delay', player.subtitleDelaySeconds]);
+    await this.command(['set_property', 'audio-delay', player.audioDelaySeconds]);
     const loadCommand: unknown[] = [
       'loadfile',
       request.url,
@@ -313,8 +333,37 @@ export class MpvService extends EventEmitter {
     return this.state;
   }
 
-  async setSpeed(speed: number): Promise<void> {
-    await this.command(['set_property', 'speed', speed]);
+  async setSpeed(speed: number): Promise<PlaybackState> {
+    await this.command(['set_property', 'speed', Math.min(3, Math.max(0.25, speed))]);
+    await this.showHud(`${speed.toFixed(2).replace(/\.00$/, '')}× speed`);
+    return this.state;
+  }
+
+  async setSubtitleDelay(seconds: number): Promise<PlaybackState> {
+    const value = Math.min(30, Math.max(-30, seconds));
+    await this.command(['set_property', 'sub-delay', value]);
+    await this.showHud(`Subtitle delay ${formatSignedSeconds(value)}`);
+    return this.state;
+  }
+
+  async setAudioDelay(seconds: number): Promise<PlaybackState> {
+    const value = Math.min(30, Math.max(-30, seconds));
+    await this.command(['set_property', 'audio-delay', value]);
+    await this.showHud(`Audio delay ${formatSignedSeconds(value)}`);
+    return this.state;
+  }
+
+  async seekChapter(index: number): Promise<PlaybackState> {
+    const chapter = this.stateValue.chapters[index];
+    if (!chapter) throw new Error('That chapter is not available.');
+    await this.seek(chapter.startTicks / 10_000_000);
+    await this.showHud(chapter.name || `Chapter ${index + 1}`);
+    return this.state;
+  }
+
+  async showHud(message: string): Promise<void> {
+    if (!this.socket || this.socket.destroyed) return;
+    await this.command(['show-text', message, 1_800]);
   }
 
   async setSkipPrompt(label: string | null): Promise<void> {
@@ -346,6 +395,43 @@ export class MpvService extends EventEmitter {
     } catch (error) {
       this.skipPromptLabel = previousLabel;
       throw error;
+    }
+  }
+
+  async setPostPlayPrompt(
+    nextItem: MediaItem | null,
+    seconds: number | null,
+    canceled = false
+  ): Promise<void> {
+    this.patchState({
+      nextItem,
+      postPlaySecondsRemaining: seconds,
+      postPlayCanceled: canceled
+    });
+    if (!this.socket || this.socket.destroyed) return;
+    if (nextItem && seconds !== null && !canceled) {
+      this.postPlayVisible = true;
+      await this.command([
+        'osd-overlay',
+        7_103,
+        'ass-events',
+        postPlayAss(
+          nextItem.seriesName
+            ? `${nextItem.indexLabel ?? ''} · ${nextItem.name}`.replace(/^ · /, '')
+            : nextItem.name,
+          seconds
+        ),
+        1280,
+        720,
+        100
+      ]);
+      await this.command(['enable-section', 'jellyclient-postplay']);
+      return;
+    }
+    if (this.postPlayVisible) {
+      this.postPlayVisible = false;
+      await this.command(['disable-section', 'jellyclient-postplay']);
+      await this.command(['osd-overlay', 7_103, 'none', '']);
     }
   }
 
@@ -402,6 +488,30 @@ export class MpvService extends EventEmitter {
       'define-section',
       'jellyclient-skip',
       'n script-message jellyclient-skip\nN script-message jellyclient-skip',
+      'force'
+    ]);
+    await this.command([
+      'define-section',
+      'jellyclient-controls',
+      [
+        'a cycle audio',
+        'A cycle audio',
+        's cycle sub',
+        'S cycle sub',
+        'Ctrl+LEFT script-message jellyclient-chapter -1',
+        'Ctrl+RIGHT script-message jellyclient-chapter 1'
+      ].join('\n'),
+      'force'
+    ]);
+    await this.command(['enable-section', 'jellyclient-controls']);
+    await this.command([
+      'define-section',
+      'jellyclient-postplay',
+      [
+        'n script-message jellyclient-play-next',
+        'N script-message jellyclient-play-next',
+        'ESC script-message jellyclient-cancel-next'
+      ].join('\n'),
       'force'
     ]);
   }
@@ -548,6 +658,27 @@ export class MpvService extends EventEmitter {
       this.emit('skip-segment');
       return;
     }
+    if (
+      message.event === 'client-message' &&
+      message.args?.[0] === 'jellyclient-chapter'
+    ) {
+      this.emit('chapter-step', Number(message.args[1]) || 0);
+      return;
+    }
+    if (
+      message.event === 'client-message' &&
+      message.args?.[0] === 'jellyclient-play-next'
+    ) {
+      this.emit('play-next');
+      return;
+    }
+    if (
+      message.event === 'client-message' &&
+      message.args?.[0] === 'jellyclient-cancel-next'
+    ) {
+      this.emit('cancel-post-play');
+      return;
+    }
 
     if (message.event === 'property-change' && message.name) {
       this.onProperty(message.name, message.data);
@@ -585,9 +716,16 @@ export class MpvService extends EventEmitter {
   private onProperty(name: string, value: unknown): void {
     switch (name) {
       case 'time-pos':
-        this.patchState({
-          positionSeconds: typeof value === 'number' ? value : 0
-        });
+        {
+          const positionSeconds = typeof value === 'number' ? value : 0;
+          this.patchState({
+            positionSeconds,
+            currentChapterIndex: chapterAt(
+              this.stateValue.chapters,
+              positionSeconds
+            )
+          });
+        }
         break;
       case 'duration':
         this.patchState({
@@ -629,6 +767,27 @@ export class MpvService extends EventEmitter {
         break;
       case 'fullscreen':
         this.patchState({ fullscreen: Boolean(value) });
+        break;
+      case 'speed':
+        this.patchState({
+          speed: typeof value === 'number' ? value : this.stateValue.speed
+        });
+        break;
+      case 'sub-delay':
+        this.patchState({
+          subtitleDelaySeconds:
+            typeof value === 'number'
+              ? value
+              : this.stateValue.subtitleDelaySeconds
+        });
+        break;
+      case 'audio-delay':
+        this.patchState({
+          audioDelaySeconds:
+            typeof value === 'number'
+              ? value
+              : this.stateValue.audioDelaySeconds
+        });
         break;
       case 'track-list':
         {
@@ -872,6 +1031,7 @@ export class MpvService extends EventEmitter {
     }
     this.pending.clear();
     this.skipPromptLabel = null;
+    this.postPlayVisible = false;
   }
 
   private async candidatePaths(overridePath?: string): Promise<string[]> {
@@ -928,4 +1088,21 @@ export class MpvService extends EventEmitter {
       });
     });
   }
+}
+
+function chapterAt(
+  chapters: PlaybackState['chapters'],
+  positionSeconds: number
+): number | null {
+  let active: number | null = null;
+  for (const [index, chapter] of chapters.entries()) {
+    if (chapter.startTicks / 10_000_000 > positionSeconds) break;
+    active = index;
+  }
+  return active;
+}
+
+function formatSignedSeconds(value: number): string {
+  const normalized = Math.abs(value) < 0.005 ? 0 : value;
+  return `${normalized > 0 ? '+' : ''}${normalized.toFixed(2)} s`;
 }

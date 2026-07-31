@@ -9,7 +9,7 @@ export function Brand({ compact = false }: { compact?: boolean }) {
       <span className="brand__word">
         Jelly<span>Client</span>
       </span>
-      {!compact && <span className="brand__edition">WINDOWS PREVIEW</span>}
+      {!compact && <span className="brand__edition">JELLYFIN CLIENT</span>}
     </div>
   );
 }

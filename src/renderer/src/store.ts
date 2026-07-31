@@ -18,6 +18,7 @@ export type MainView =
   | { kind: 'home' }
   | { kind: 'library'; library: LibraryView }
   | { kind: 'search'; query: string }
+  | { kind: 'favorites' }
   | { kind: 'settings' };
 
 export interface Notice {

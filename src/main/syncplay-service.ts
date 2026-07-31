@@ -390,6 +390,8 @@ export class SyncPlayService {
         {
           itemId,
           startPositionTicks: queue.StartPositionTicks ?? 0,
+          mediaSourceId: null,
+          maxStreamingBitrate: null,
           audioStreamIndex: null,
           subtitleStreamIndex: null
         },

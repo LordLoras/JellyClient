@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   choosePreferredSubtitle,
+  choosePreferredAudio,
   languageAliases,
   mpvLanguagePriority
 } from './subtitle-selection.js';
@@ -54,5 +55,20 @@ describe('subtitle selection', () => {
   it('provides MPV with common English aliases', () => {
     expect(languageAliases('English')).toContain('eng');
     expect(mpvLanguagePriority('eng')).toContain('en');
+  });
+
+  it('can prefer forced subtitles and avoid SDH tracks', () => {
+    const selected = choosePreferredSubtitle([
+      { id: 1, language: 'eng', title: 'English SDH', isDefault: true, isForced: false, isHearingImpaired: true },
+      { id: 2, language: 'eng', title: 'English forced', isDefault: false, isForced: true }
+    ], 'eng', { preferForced: true, avoidHearingImpaired: true });
+    expect(selected?.id).toBe(2);
+  });
+
+  it('selects preferred audio before a default in another language', () => {
+    expect(choosePreferredAudio([
+      { id: 1, language: 'jpn', title: 'Japanese', isDefault: true },
+      { id: 2, language: 'eng', title: 'English', isDefault: false }
+    ], 'eng')?.id).toBe(2);
   });
 });

@@ -11,6 +11,7 @@ import { app, safeStorage } from 'electron';
 import { z } from 'zod';
 import type {
   AppSettings,
+  SeriesPlaybackPreference,
   ServerProfile
 } from '@shared/contracts.js';
 import { defaultSettings } from '@shared/defaults.js';
@@ -111,6 +112,15 @@ export class ConfigService {
     this.data.settings = settingsSchema.parse(settings);
     await this.persist();
     return this.settings;
+  }
+
+  async saveSeriesPreference(
+    seriesId: string,
+    preference: SeriesPlaybackPreference
+  ): Promise<void> {
+    this.data.settings.player.seriesPreferences[seriesId] = preference;
+    this.data.settings = settingsSchema.parse(this.data.settings);
+    await this.persist();
   }
 
   async saveSession(session: StoredSession): Promise<boolean> {

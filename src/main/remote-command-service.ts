@@ -71,6 +71,8 @@ export class RemoteCommandService {
     const input: PlayMediaInput = {
       itemId,
       startPositionTicks: request.StartPositionTicks ?? 0,
+      mediaSourceId: null,
+      maxStreamingBitrate: null,
       audioStreamIndex: request.AudioStreamIndex ?? null,
       subtitleStreamIndex: request.SubtitleStreamIndex ?? null
     };

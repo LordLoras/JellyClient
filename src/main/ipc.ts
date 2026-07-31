@@ -16,6 +16,7 @@ import {
   catalogQuerySchema,
   connectionInputSchema,
   playMediaInputSchema,
+  quickConnectStartInputSchema,
   settingsSchema,
   watchTogetherInputSchema
 } from '@shared/schemas.js';
@@ -47,6 +48,24 @@ const playbackActionSchema = z.discriminatedUnion('type', [
     fullscreen: z.boolean()
   }),
   z.object({ type: z.literal('toggle-stats') }),
+  z.object({
+    type: z.literal('speed'),
+    speed: z.number().min(0.25).max(3)
+  }),
+  z.object({
+    type: z.literal('subtitle-delay'),
+    seconds: z.number().min(-30).max(30)
+  }),
+  z.object({
+    type: z.literal('audio-delay'),
+    seconds: z.number().min(-30).max(30)
+  }),
+  z.object({
+    type: z.literal('chapter'),
+    index: z.number().int().min(0)
+  }),
+  z.object({ type: z.literal('cancel-post-play') }),
+  z.object({ type: z.literal('play-next') }),
   z.object({
     type: z.literal('select-track'),
     trackType: z.enum(['audio', 'subtitle']),
@@ -103,6 +122,18 @@ export function registerIpc(services: Services): () => void {
   handle('auth:connect', async (_event, raw) => {
     return jellyfin.connect(connectionInputSchema.parse(raw));
   });
+  handle('auth:discover', async () => jellyfin.discoverServers());
+  handle('auth:quick-start', async (_event, raw) => {
+    return jellyfin.startQuickConnect(quickConnectStartInputSchema.parse(raw));
+  });
+  handle('auth:quick-poll', async (_event, secret) => {
+    return jellyfin.pollQuickConnect(
+      z.string().min(1).max(500).parse(secret)
+    );
+  });
+  handle('auth:quick-cancel', async (_event, secret) => {
+    jellyfin.cancelQuickConnect(z.string().min(1).max(500).parse(secret));
+  });
   handle('auth:disconnect', async () => {
     if (playback.state.item) await playback.stopLocal();
     syncPlay.reset();
@@ -120,6 +151,18 @@ export function registerIpc(services: Services): () => void {
   });
   handle('catalog:item', async (_event, itemId) => {
     return jellyfin.getItem(z.string().min(1).max(100).parse(itemId));
+  });
+  handle('catalog:favorite', async (_event, itemId, favorite) => {
+    return jellyfin.setFavorite(
+      z.string().min(1).max(100).parse(itemId),
+      z.boolean().parse(favorite)
+    );
+  });
+  handle('catalog:played', async (_event, itemId, played) => {
+    return jellyfin.setPlayed(
+      z.string().min(1).max(100).parse(itemId),
+      z.boolean().parse(played)
+    );
   });
 
   handle('playback:play', async (_event, raw): Promise<PlaybackState> => {
@@ -168,8 +211,26 @@ export function registerIpc(services: Services): () => void {
       case 'toggle-stats':
         await mpv.toggleStats();
         break;
+      case 'speed':
+        await mpv.setSpeed(action.speed);
+        break;
+      case 'subtitle-delay':
+        await mpv.setSubtitleDelay(action.seconds);
+        break;
+      case 'audio-delay':
+        await mpv.setAudioDelay(action.seconds);
+        break;
+      case 'chapter':
+        await mpv.seekChapter(action.index);
+        break;
+      case 'cancel-post-play':
+        await playback.cancelPostPlay();
+        break;
+      case 'play-next':
+        await playback.playNext();
+        break;
       case 'select-track':
-        await mpv.selectTrack(action.trackType, action.id);
+        await playback.selectTrackLocal(action.trackType, action.id);
         break;
     }
     return playback.state;

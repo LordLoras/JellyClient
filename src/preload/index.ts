@@ -9,6 +9,7 @@ import type {
   ConnectionInput,
   JellyClientApi,
   PlayMediaInput,
+  QuickConnectStartInput,
   WatchTogetherInput
 } from '@shared/contracts.js';
 
@@ -16,6 +17,13 @@ const api: JellyClientApi = {
   bootstrap: () => ipcRenderer.invoke('app:bootstrap'),
   connect: (input: ConnectionInput) =>
     ipcRenderer.invoke('auth:connect', input),
+  discoverServers: () => ipcRenderer.invoke('auth:discover'),
+  startQuickConnect: (input: QuickConnectStartInput) =>
+    ipcRenderer.invoke('auth:quick-start', input),
+  pollQuickConnect: (secret: string) =>
+    ipcRenderer.invoke('auth:quick-poll', secret),
+  cancelQuickConnect: (secret: string) =>
+    ipcRenderer.invoke('auth:quick-cancel', secret),
   disconnect: () => ipcRenderer.invoke('auth:disconnect'),
   getHome: () => ipcRenderer.invoke('catalog:home'),
   discardPlaybackProgress: (itemId: string) =>
@@ -24,6 +32,10 @@ const api: JellyClientApi = {
     ipcRenderer.invoke('catalog:items', query),
   getItem: (itemId: string) =>
     ipcRenderer.invoke('catalog:item', itemId),
+  setFavorite: (itemId: string, favorite: boolean) =>
+    ipcRenderer.invoke('catalog:favorite', itemId, favorite),
+  setPlayed: (itemId: string, played: boolean) =>
+    ipcRenderer.invoke('catalog:played', itemId, played),
   play: (input: PlayMediaInput) =>
     ipcRenderer.invoke('playback:play', input),
   playbackAction: (action) =>

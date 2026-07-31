@@ -126,6 +126,22 @@ if (!hasSingleInstanceLock) {
         });
       });
     });
+    playback.on('play-next-requested', (input) => {
+      const operation = syncPlay.state.membership === 'joined'
+        ? syncPlay.startItem(input)
+        : playback.play(input);
+      void operation.catch((error: unknown) => {
+        events.emitClient({
+          type: 'notice',
+          data: {
+            level: 'error',
+            message: error instanceof Error
+              ? error.message
+              : 'Could not start the next episode.'
+          }
+        });
+      });
+    });
     new RemoteCommandService(
       socket,
       playback,

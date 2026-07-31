@@ -3,6 +3,7 @@ import {
   ExternalLink,
   FileCog,
   FolderOpen,
+  Gauge,
   MonitorUp,
   Save,
   ShieldCheck
@@ -75,7 +76,7 @@ export function SettingsPage({
   return (
     <div className="settings-page page-pad">
       <header className="page-title">
-        <p className="eyebrow">PLAYBACK CONTROL ROOM</p>
+        <p className="eyebrow">PLAYBACK SETTINGS</p>
         <h1>Settings</h1>
         <p>Changes apply the next time the native MPV window starts.</p>
       </header>
@@ -194,8 +195,18 @@ export function SettingsPage({
         <section className="settings-card subtitle-settings">
           <header>
             <span className="icon-plate"><Captions /></span>
-            <div><h2>Subtitle preference</h2><p>Automatic, predictable track selection.</p></div>
+            <div><h2>Language preferences</h2><p>Default audio and subtitle selection.</p></div>
           </header>
+          <label className="field">
+            <span>Preferred audio language</span>
+            <LanguageSelect
+              value={draft.player.preferredAudioLanguage}
+              onChange={(value) => setDraft({
+                ...draft,
+                player: { ...draft.player, preferredAudioLanguage: value }
+              })}
+            />
+          </label>
           <Toggle
             label="Automatically enable subtitles"
             detail="Choose the preferred language when playback starts."
@@ -207,32 +218,149 @@ export function SettingsPage({
           />
           <label className="field">
             <span>Preferred language</span>
-            <select
+            <LanguageSelect
               value={draft.player.preferredSubtitleLanguage}
               disabled={!draft.player.autoEnableSubtitles}
-              onChange={(event) => setDraft({
+              onChange={(value) => setDraft({
                 ...draft,
                 player: {
                   ...draft.player,
-                  preferredSubtitleLanguage: event.target.value
+                  preferredSubtitleLanguage: value
                 }
               })}
-            >
-              <option value="eng">English</option>
-              <option value="bul">Bulgarian</option>
-              <option value="spa">Spanish</option>
-              <option value="deu">German</option>
-              <option value="fra">French</option>
-              <option value="ita">Italian</option>
-              <option value="jpn">Japanese</option>
-              <option value="kor">Korean</option>
-              <option value="zho">Chinese</option>
-            </select>
+            />
           </label>
+          <Toggle
+            label="Prefer forced subtitles"
+            detail="Choose a matching forced track when one is available."
+            checked={draft.player.preferForcedSubtitles}
+            onChange={(value) => setDraft({
+              ...draft,
+              player: { ...draft.player, preferForcedSubtitles: value }
+            })}
+          />
+          <Toggle
+            label="Avoid SDH subtitles"
+            detail="Prefer a standard subtitle track over SDH or closed captions."
+            checked={draft.player.avoidSdhSubtitles}
+            onChange={(value) => setDraft({
+              ...draft,
+              player: { ...draft.player, avoidSdhSubtitles: value }
+            })}
+          />
+          <Toggle
+            label="Remember each series"
+            detail="Reuse manually selected audio and subtitle languages for later episodes."
+            checked={draft.player.rememberSeriesPreferences}
+            onChange={(value) => setDraft({
+              ...draft,
+              player: { ...draft.player, rememberSeriesPreferences: value }
+            })}
+          />
           <p className="settings-note settings-note--signal">
             No matching language means subtitles stay off. A manual track
             choice in the player always wins for the current video.
           </p>
+        </section>
+
+        <section className="settings-card settings-card--wide">
+          <header>
+            <span className="icon-plate"><Gauge /></span>
+            <div><h2>Playback behavior</h2><p>Defaults for every new video.</p></div>
+          </header>
+          <div className="settings-columns">
+            <label className="field">
+              <span>Playback speed</span>
+              <select
+                value={draft.player.playbackSpeed}
+                onChange={(event) => setDraft({
+                  ...draft,
+                  player: { ...draft.player, playbackSpeed: Number(event.target.value) }
+                })}
+              >
+                {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((speed) => (
+                  <option key={speed} value={speed}>{speed}×</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Next episode countdown</span>
+              <select
+                value={draft.player.nextEpisodeCountdownSeconds}
+                disabled={!draft.player.autoPlayNext}
+                onChange={(event) => setDraft({
+                  ...draft,
+                  player: {
+                    ...draft.player,
+                    nextEpisodeCountdownSeconds: Number(event.target.value)
+                  }
+                })}
+              >
+                {[5, 10, 15, 20, 30].map((seconds) => (
+                  <option key={seconds} value={seconds}>{seconds} seconds</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="settings-columns">
+            <label className="field">
+              <span>Subtitle delay (seconds)</span>
+              <input
+                type="number"
+                min={-30}
+                max={30}
+                step={0.1}
+                value={draft.player.subtitleDelaySeconds}
+                onChange={(event) => setDraft({
+                  ...draft,
+                  player: { ...draft.player, subtitleDelaySeconds: Number(event.target.value) }
+                })}
+              />
+            </label>
+            <label className="field">
+              <span>Audio delay (seconds)</span>
+              <input
+                type="number"
+                min={-30}
+                max={30}
+                step={0.1}
+                value={draft.player.audioDelaySeconds}
+                onChange={(event) => setDraft({
+                  ...draft,
+                  player: { ...draft.player, audioDelaySeconds: Number(event.target.value) }
+                })}
+              />
+            </label>
+          </div>
+          <div className="toggle-stack">
+            <Toggle
+              label="Automatically skip intros"
+              detail="Use intro segments reported by Jellyfin. The N shortcut remains available."
+              checked={draft.player.autoSkipIntro}
+              onChange={(value) => setDraft({
+                ...draft,
+                player: { ...draft.player, autoSkipIntro: value }
+              })}
+            />
+            <Toggle
+              label="Automatically skip endings"
+              detail="Use ending segments reported by Jellyfin."
+              checked={draft.player.autoSkipOutro}
+              onChange={(value) => setDraft({
+                ...draft,
+                player: { ...draft.player, autoSkipOutro: value }
+              })}
+            />
+            <Toggle
+              label="Play the next episode"
+              detail="Show a countdown at the end of an episode and continue automatically."
+              checked={draft.player.autoPlayNext}
+              onChange={(value) => setDraft({
+                ...draft,
+                player: { ...draft.player, autoPlayNext: value }
+              })}
+            />
+          </div>
         </section>
 
         <section className="settings-card settings-card--full">
@@ -290,6 +418,34 @@ export function SettingsPage({
         <Save /> {busy ? 'Saving…' : 'Save settings'}
       </button>
     </div>
+  );
+}
+
+function LanguageSelect({
+  value,
+  disabled = false,
+  onChange
+}: {
+  value: string;
+  disabled?: boolean;
+  onChange(value: string): void;
+}) {
+  return (
+    <select
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      <option value="eng">English</option>
+      <option value="bul">Bulgarian</option>
+      <option value="spa">Spanish</option>
+      <option value="deu">German</option>
+      <option value="fra">French</option>
+      <option value="ita">Italian</option>
+      <option value="jpn">Japanese</option>
+      <option value="kor">Korean</option>
+      <option value="zho">Chinese</option>
+    </select>
   );
 }
 

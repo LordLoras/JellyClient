@@ -20,6 +20,7 @@ export interface VidaaMediaItem {
   name: string;
   type: string;
   seriesName: string | null;
+  seriesId: string | null;
   indexLabel: string | null;
   productionYear: number | null;
   overview: string | null;
@@ -31,6 +32,11 @@ export interface VidaaMediaItem {
   imageUrl: string | null;
   backdropUrl: string | null;
   mediaFormat: VidaaMediaFormat;
+}
+
+export interface VidaaChapter {
+  name: string;
+  startTicks: number;
 }
 
 export interface VidaaLibrary {
@@ -47,6 +53,11 @@ export interface VidaaHomePayload {
   latest: VidaaMediaItem[];
 }
 
+export interface VidaaItemsPage {
+  items: VidaaMediaItem[];
+  totalRecordCount: number;
+}
+
 export interface VidaaTrackChoice {
   index: number;
   type: 'audio' | 'subtitle';
@@ -61,14 +72,32 @@ export interface VidaaTrackChoice {
   isText: boolean;
 }
 
+export interface VidaaPlaybackSource {
+  id: string;
+  name: string;
+  container: string | null;
+  resolution: string | null;
+  videoRange: string | null;
+  videoCodec: string | null;
+  supportsDirectPlay: boolean;
+  supportsDirectStream: boolean;
+  audioTracks: VidaaTrackChoice[];
+  subtitleTracks: VidaaTrackChoice[];
+  defaultAudioIndex: number | null;
+  defaultSubtitleIndex: number | null;
+}
+
 export interface VidaaPlaybackOptions {
   item: VidaaMediaItem;
+  sources: VidaaPlaybackSource[];
   mediaSourceId: string;
   container: string | null;
   audioTracks: VidaaTrackChoice[];
   subtitleTracks: VidaaTrackChoice[];
   defaultAudioIndex: number | null;
   defaultSubtitleIndex: number | null;
+  chapters: VidaaChapter[];
+  nextItem: VidaaMediaItem | null;
 }
 
 export interface VidaaPlaybackRequest {
@@ -76,6 +105,7 @@ export interface VidaaPlaybackRequest {
   startPositionTicks: number;
   audioStreamIndex: number | null;
   subtitleStreamIndex: number | null;
+  maxStreamingBitrate?: number | null;
 }
 
 export type VidaaPlayMethod =
@@ -92,6 +122,8 @@ export interface VidaaPlaybackPlan {
   audioStreamIndex: number | null;
   subtitleStreamIndex: number | null;
   segments: SkipSegment[];
+  chapters: VidaaChapter[];
+  nextItem: VidaaMediaItem | null;
   playSessionId: string;
   mediaSourceId: string;
   playMethod: VidaaPlayMethod;

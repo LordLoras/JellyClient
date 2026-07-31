@@ -2,6 +2,7 @@ import {
   CircleUserRound,
   Clapperboard,
   Home,
+  Heart,
   Library,
   LoaderCircle,
   LogOut,
@@ -20,6 +21,8 @@ import {
   type FormEvent
 } from 'react';
 import type {
+  CatalogFilter,
+  CatalogSort,
   LibraryView,
   MediaItem,
   PlayMediaInput
@@ -161,10 +164,12 @@ export function App() {
     }
   };
 
-  const play = async (item: MediaItem) => {
-    const input: PlayMediaInput = {
+  const play = async (item: MediaItem, requested?: PlayMediaInput) => {
+    const input: PlayMediaInput = requested ?? {
       itemId: item.id,
       startPositionTicks: item.playbackPositionTicks,
+      mediaSourceId: null,
+      maxStreamingBitrate: null,
       audioStreamIndex: null,
       subtitleStreamIndex: null
     };
@@ -241,6 +246,12 @@ export function App() {
               store.setView({ kind: 'home' });
               void loadHome(true);
             }}
+          />
+          <NavButton
+            active={store.view.kind === 'favorites'}
+            icon={<Heart />}
+            label="Favorites"
+            onClick={() => void loadFavorites()}
           />
           <p>LIBRARIES</p>
           {(store.home?.libraries ?? []).map((library) => (
@@ -342,13 +353,18 @@ export function App() {
               onDiscardProgress={setDiscardItem}
             />
           )}
-          {(store.view.kind === 'library' || store.view.kind === 'search') && (
+          {(store.view.kind === 'library' || store.view.kind === 'search' || store.view.kind === 'favorites') && (
             <CatalogView
               title={
                 store.view.kind === 'library'
                   ? store.view.library.name
-                  : `Results for “${store.view.query}”`
+                  : store.view.kind === 'search'
+                    ? `Results for “${store.view.query}”`
+                    : 'Favorites'
               }
+              parentId={store.view.kind === 'library' ? store.view.library.id : null}
+              searchTerm={store.view.kind === 'search' ? store.view.query : ''}
+              initialFilter={store.view.kind === 'favorites' ? 'favorite' : 'all'}
               items={store.page?.items ?? []}
               total={store.page?.totalRecordCount ?? 0}
               busy={store.busy}
@@ -377,8 +393,14 @@ export function App() {
           item={store.detail}
           syncPlay={store.syncPlay}
           onClose={() => store.setDetail(null)}
-          onPlay={() => void play(store.detail!)}
+          onPlay={(input) => void play(store.detail!, input)}
           onWatchTogether={() => void watchTogether(store.detail!)}
+          onOpen={(item) => void openItem(item)}
+          onUpdated={(item) => {
+            store.setDetail(item);
+            void loadHome(true);
+          }}
+          onError={(error) => store.addNotice('error', friendlyError(error))}
         />
       )}
 
@@ -526,6 +548,9 @@ function HomeView({
 
 function CatalogView({
   title,
+  parentId,
+  searchTerm,
+  initialFilter,
   items,
   total,
   busy,
@@ -533,17 +558,92 @@ function CatalogView({
   onPlay
 }: {
   title: string;
+  parentId: string | null;
+  searchTerm: string;
+  initialFilter: CatalogFilter;
   items: MediaItem[];
   total: number;
   busy: boolean;
   onOpen(item: MediaItem): void;
   onPlay(item: MediaItem): void;
 }) {
+  const [sortBy, setSortBy] = useState<CatalogSort>('SortName');
+  const [descending, setDescending] = useState(false);
+  const [filter, setFilter] = useState<CatalogFilter>(initialFilter);
+
+  useEffect(() => {
+    setSortBy('SortName');
+    setDescending(false);
+    setFilter(initialFilter);
+  }, [title, initialFilter]);
+
+  const changeQuery = async (
+    nextSort: CatalogSort,
+    nextDescending: boolean,
+    nextFilter: CatalogFilter
+  ) => {
+    const state = useAppStore.getState();
+    state.setBusy(true);
+    try {
+      state.setPage(await window.jellyClient.getItems({
+        parentId,
+        searchTerm,
+        startIndex: 0,
+        limit: 150,
+        includeItemTypes: searchTerm || initialFilter === 'favorite'
+          ? ['Movie', 'Series', 'Season', 'Episode', 'Video', 'BoxSet']
+          : [],
+        sortBy: nextSort,
+        sortDescending: nextDescending,
+        filter: nextFilter
+      }));
+    } catch (error) {
+      state.addNotice('error', friendlyError(error));
+    } finally {
+      state.setBusy(false);
+    }
+  };
+
   return (
     <div className="catalog-view page-pad">
       <header className="page-title page-title--row">
         <div><p className="eyebrow">BROWSE</p><h1>{title}</h1></div>
-        <span>{total} items</span>
+        <div className="catalog-controls">
+          <label>
+            <span>Show</span>
+            <select value={filter} onChange={(event) => {
+              const value = event.target.value as CatalogFilter;
+              setFilter(value);
+              void changeQuery(sortBy, descending, value);
+            }}>
+              <option value="all">All</option>
+              <option value="unplayed">Unwatched</option>
+              <option value="played">Watched</option>
+              <option value="favorite">Favorites</option>
+            </select>
+          </label>
+          <label>
+            <span>Sort</span>
+            <select value={sortBy} onChange={(event) => {
+              const value = event.target.value as CatalogSort;
+              setSortBy(value);
+              void changeQuery(value, descending, filter);
+            }}>
+              <option value="SortName">Title</option>
+              <option value="DateCreated">Date added</option>
+              <option value="PremiereDate">Release date</option>
+              <option value="ProductionYear">Year</option>
+              <option value="CommunityRating">Rating</option>
+              <option value="Runtime">Runtime</option>
+            </select>
+          </label>
+          <button onClick={() => {
+            const value = !descending;
+            setDescending(value);
+            void changeQuery(sortBy, value, filter);
+          }}>{descending ? 'Descending' : 'Ascending'}</button>
+          <span>{total} items</span>
+        </div>
       </header>
       {items.length > 0 ? (
         <div className="media-grid">
@@ -636,6 +736,28 @@ async function loadItems(library: LibraryView, searchTerm: string): Promise<void
       startIndex: 0,
       limit: 150,
       includeItemTypes: []
+    }));
+  } catch (error) {
+    state.addNotice('error', friendlyError(error));
+  } finally {
+    state.setBusy(false);
+  }
+}
+
+async function loadFavorites(): Promise<void> {
+  const state = useAppStore.getState();
+  state.setBusy(true);
+  state.setView({ kind: 'favorites' });
+  try {
+    state.setPage(await window.jellyClient.getItems({
+      parentId: null,
+      searchTerm: '',
+      startIndex: 0,
+      limit: 150,
+      includeItemTypes: ['Movie', 'Series', 'Season', 'Episode', 'Video', 'BoxSet'],
+      sortBy: 'SortName',
+      sortDescending: false,
+      filter: 'favorite'
     }));
   } catch (error) {
     state.addNotice('error', friendlyError(error));

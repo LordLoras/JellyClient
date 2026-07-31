@@ -1,12 +1,18 @@
 import {
   Clock3,
+  Check,
+  Heart,
+  ListVideo,
   Play,
   Star,
   Users,
   X
 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import type {
   ItemDetails,
+  MediaItem,
+  PlayMediaInput,
   SyncPlayState
 } from '@shared/contracts.js';
 import { formatDurationFromTicks } from '../format';
@@ -16,16 +22,65 @@ interface Props {
   item: ItemDetails;
   syncPlay: SyncPlayState;
   onClose(): void;
-  onPlay(): void;
+  onPlay(input: PlayMediaInput): void;
   onWatchTogether(): void;
+  onOpen(item: MediaItem): void;
+  onUpdated(item: ItemDetails): void;
+  onError(error: unknown): void;
 }
 export function ItemDetailsPanel({
   item,
   syncPlay,
   onClose,
   onPlay,
-  onWatchTogether
+  onWatchTogether,
+  onOpen,
+  onUpdated,
+  onError
 }: Props) {
+  const initialSource = useMemo(
+    () => item.playbackSources.find((source) => source.supportsDirectPlay) ??
+      item.playbackSources[0] ?? null,
+    [item]
+  );
+  const [sourceId, setSourceId] = useState(initialSource?.id ?? '');
+  const [audioIndex, setAudioIndex] = useState<number | null>(null);
+  const [subtitleIndex, setSubtitleIndex] = useState<number | null>(null);
+  const [maxBitrate, setMaxBitrate] = useState<number | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const source = item.playbackSources.find((candidate) => candidate.id === sourceId) ??
+    initialSource;
+
+  useEffect(() => {
+    setSourceId(initialSource?.id ?? '');
+    setAudioIndex(null);
+    setSubtitleIndex(null);
+    setMaxBitrate(null);
+  }, [item.id, initialSource?.id]);
+
+  const start = (startPositionTicks = item.playbackPositionTicks) => onPlay({
+    itemId: item.id,
+    startPositionTicks,
+    mediaSourceId: source?.id ?? null,
+    maxStreamingBitrate: maxBitrate,
+    audioStreamIndex: audioIndex,
+    subtitleStreamIndex: subtitleIndex
+  });
+
+  const updateLibraryState = async (kind: 'favorite' | 'played') => {
+    setUpdating(true);
+    try {
+      const updated = kind === 'favorite'
+        ? await window.jellyClient.setFavorite(item.id, !item.isFavorite)
+        : await window.jellyClient.setPlayed(item.id, !item.isPlayed);
+      onUpdated(updated);
+    } catch (error) {
+      onError(error);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   return (
     <div className="sheet-backdrop" onMouseDown={onClose}>
       <section
@@ -56,7 +111,7 @@ export function ItemDetailsPanel({
           <p className="detail-sheet__overview">{item.overview ?? 'No overview is available.'}</p>
           <div className="detail-sheet__actions">
             {item.canPlay && (
-              <button className="button button--primary" onClick={onPlay}>
+              <button className="button button--primary" onClick={() => start()}>
                 <Play fill="currentColor" />
                 {item.playbackPositionTicks > 0 ? 'Resume' : syncPlay.membership === 'joined' ? 'Play with group' : 'Play'}
               </button>
@@ -66,7 +121,123 @@ export function ItemDetailsPanel({
                 <Users /> Watch together
               </button>
             )}
+            <button
+              className={`button button--glass${item.isFavorite ? ' is-active' : ''}`}
+              disabled={updating}
+              onClick={() => void updateLibraryState('favorite')}
+            >
+              <Heart fill={item.isFavorite ? 'currentColor' : 'none'} />
+              {item.isFavorite ? 'In favorites' : 'Add to favorites'}
+            </button>
+            <button
+              className={`button button--glass${item.isPlayed ? ' is-active' : ''}`}
+              disabled={updating}
+              onClick={() => void updateLibraryState('played')}
+            >
+              <Check /> {item.isPlayed ? 'Watched' : 'Mark watched'}
+            </button>
           </div>
+          {item.canPlay && item.playbackSources.length > 0 && (
+            <section className="playback-options">
+              <header><ListVideo /><span><strong>Playback options</strong><small>Choose a file, quality, and starting tracks.</small></span></header>
+              <div className="playback-options__grid">
+                <label className="field">
+                  <span>Version</span>
+                  <select value={source?.id ?? ''} onChange={(event) => {
+                    setSourceId(event.target.value);
+                    setAudioIndex(null);
+                    setSubtitleIndex(null);
+                  }}>
+                    {item.playbackSources.map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>
+                        {sourceLabel(candidate)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Quality</span>
+                  <select
+                    value={maxBitrate ?? 'original'}
+                    onChange={(event) => setMaxBitrate(
+                      event.target.value === 'original' ? null : Number(event.target.value)
+                    )}
+                  >
+                    <option value="original">Original quality</option>
+                    <option value={120_000_000}>Up to 120 Mbps</option>
+                    <option value={80_000_000}>Up to 80 Mbps</option>
+                    <option value={40_000_000}>Up to 40 Mbps</option>
+                    <option value={20_000_000}>Up to 20 Mbps</option>
+                    <option value={10_000_000}>Up to 10 Mbps</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Audio</span>
+                  <select
+                    value={audioIndex ?? 'auto'}
+                    onChange={(event) => setAudioIndex(
+                      event.target.value === 'auto' ? null : Number(event.target.value)
+                    )}
+                  >
+                    <option value="auto">Preferred language</option>
+                    {(source?.audioTracks ?? []).map((track) => (
+                      <option key={track.index} value={track.index}>{trackLabel(track)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Subtitles</span>
+                  <select
+                    value={subtitleIndex ?? 'auto'}
+                    onChange={(event) => setSubtitleIndex(
+                      event.target.value === 'auto' ? null : Number(event.target.value)
+                    )}
+                  >
+                    <option value="auto">Use preference</option>
+                    <option value={-1}>Off</option>
+                    {(source?.subtitleTracks ?? []).map((track) => (
+                      <option key={track.index} value={track.index}>{trackLabel(track)}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <p className="playback-options__decision">
+                {source?.supportsDirectPlay
+                  ? 'This file can be sent to MPV without video conversion at original quality.'
+                  : source?.supportsDirectStream
+                    ? 'Jellyfin may repackage this file without converting the video.'
+                    : 'Jellyfin will convert this file for the selected quality.'}
+              </p>
+            </section>
+          )}
+          {item.chapters.length > 0 && (
+            <section className="detail-section">
+              <header><span><strong>Chapters</strong><small>{item.chapters.length} markers</small></span></header>
+              <div className="chapter-strip">
+                {item.chapters.map((chapter, index) => (
+                  <button key={`${chapter.startTicks}-${chapter.name}`} onClick={() => start(chapter.startTicks)}>
+                    <span>{chapter.imageUrl ? <img src={chapter.imageUrl} alt="" /> : <b>{index + 1}</b>}</span>
+                    <strong>{chapter.name || `Chapter ${index + 1}`}</strong>
+                    <small>{formatDurationFromTicks(chapter.startTicks)}</small>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+          {(item.specialFeatures.length > 0 || item.localTrailers.length > 0) && (
+            <section className="detail-section">
+              <header><span><strong>Extras and trailers</strong><small>From this Jellyfin item</small></span></header>
+              <div className="extra-strip">
+                {[...item.localTrailers, ...item.specialFeatures].map((extra) => (
+                  <button key={extra.id} onClick={() => onOpen(extra)}>
+                    <span>{extra.imageUrl ? <img src={extra.imageUrl} alt="" /> : <Play />}</span>
+                    <strong>{extra.name}</strong>
+                    <small>{extra.type}</small>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
           {item.genres.length > 0 && (
             <div className="detail-sheet__meta">
               <span>Genres</span>
@@ -90,4 +261,24 @@ export function ItemDetailsPanel({
       </section>
     </div>
   );
+}
+
+function sourceLabel(source: ItemDetails['playbackSources'][number]): string {
+  return [
+    source.name,
+    source.resolution,
+    source.videoRange,
+    source.videoCodec?.toUpperCase()
+  ].filter(Boolean).join(' · ');
+}
+
+function trackLabel(track: ItemDetails['playbackSources'][number]['audioTracks'][number]): string {
+  return [
+    track.title,
+    track.language,
+    track.codec?.toUpperCase(),
+    track.channels,
+    track.forced ? 'forced' : null,
+    track.hearingImpaired ? 'SDH' : null
+  ].filter(Boolean).join(' · ');
 }

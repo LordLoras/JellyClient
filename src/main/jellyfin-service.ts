@@ -2,27 +2,43 @@ import { EventEmitter } from 'node:events';
 import { Jellyfin } from '@jellyfin/sdk/lib/jellyfin.js';
 import type { Api } from '@jellyfin/sdk/lib/api.js';
 import { getItemsApi } from '@jellyfin/sdk/lib/utils/api/items-api.js';
+import { getMediaInfoApi } from '@jellyfin/sdk/lib/utils/api/media-info-api.js';
 import { getPlaystateApi } from '@jellyfin/sdk/lib/utils/api/playstate-api.js';
+import { getQuickConnectApi } from '@jellyfin/sdk/lib/utils/api/quick-connect-api.js';
 import { getSystemApi } from '@jellyfin/sdk/lib/utils/api/system-api.js';
 import { getTvShowsApi } from '@jellyfin/sdk/lib/utils/api/tv-shows-api.js';
 import { getUserApi } from '@jellyfin/sdk/lib/utils/api/user-api.js';
 import { getUserLibraryApi } from '@jellyfin/sdk/lib/utils/api/user-library-api.js';
 import { getUserViewsApi } from '@jellyfin/sdk/lib/utils/api/user-views-api.js';
 import type { BaseItemDto } from '@jellyfin/sdk/lib/generated-client/models/base-item-dto.js';
+import type { ChapterInfo } from '@jellyfin/sdk/lib/generated-client/models/chapter-info.js';
 import { BaseItemKind } from '@jellyfin/sdk/lib/generated-client/models/base-item-kind.js';
 import { ImageType } from '@jellyfin/sdk/lib/generated-client/models/image-type.js';
 import { ItemFields } from '@jellyfin/sdk/lib/generated-client/models/item-fields.js';
+import { ItemFilter } from '@jellyfin/sdk/lib/generated-client/models/item-filter.js';
 import { ItemSortBy } from '@jellyfin/sdk/lib/generated-client/models/item-sort-by.js';
+import type { MediaSourceInfo } from '@jellyfin/sdk/lib/generated-client/models/media-source-info.js';
+import type { MediaStream } from '@jellyfin/sdk/lib/generated-client/models/media-stream.js';
+import { MediaStreamType } from '@jellyfin/sdk/lib/generated-client/models/media-stream-type.js';
 import { SortOrder } from '@jellyfin/sdk/lib/generated-client/models/sort-order.js';
+import type { PublicSystemInfo } from '@jellyfin/sdk/lib/generated-client/models/public-system-info.js';
+import type { TrickplayInfoDto } from '@jellyfin/sdk/lib/generated-client/models/trickplay-info-dto.js';
 import type {
   CatalogQuery,
   ConnectionInput,
   ConnectionState,
+  DiscoveredServer,
   HomePayload,
   ItemDetails,
   ItemsPage,
   LibraryView,
+  MediaChapter,
   MediaItem,
+  PlaybackSourceOption,
+  PlaybackTrackOption,
+  QuickConnectPollResult,
+  QuickConnectRequest,
+  QuickConnectStartInput,
   ServerProfile
 } from '@shared/contracts.js';
 import {
@@ -36,6 +52,7 @@ import { ConfigService } from './config-service.js';
 import { ClientEventBus } from './event-bus.js';
 import { userFacingError } from './errors.js';
 import { mediaFormatForItem } from './media-format.js';
+import { discoverJellyfinServers } from './server-discovery.js';
 
 const ITEM_FIELDS = [
   ItemFields.Overview,
@@ -47,11 +64,23 @@ const ITEM_FIELDS = [
   ItemFields.PrimaryImageAspectRatio,
   ItemFields.MediaStreams,
   ItemFields.MediaSources,
+  ItemFields.Chapters,
+  ItemFields.Trickplay,
+  ItemFields.ParentId,
+  ItemFields.SpecialFeatureCount,
+  ItemFields.RemoteTrailers,
   ItemFields.RecursiveItemCount,
   ItemFields.ChildCount
 ];
 
 const DEFAULT_NEXT_UP_DAYS = 365;
+const QUICK_CONNECT_LIFETIME_MS = 5 * 60_000;
+
+interface PendingQuickConnect {
+  input: QuickConnectStartInput;
+  system: PublicSystemInfo;
+  expiresAt: number;
+}
 
 function dateOnlyDaysAgo(days: number): string {
   const date = new Date();
@@ -70,6 +99,7 @@ export class JellyfinService extends EventEmitter {
   private stateValue: ConnectionState = initialConnectionState;
   private userIdValue: string | null = null;
   private tokenStored = false;
+  private readonly pendingQuickConnect = new Map<string, PendingQuickConnect>();
 
   constructor(config: ConfigService, events: ClientEventBus) {
     super();
@@ -261,6 +291,145 @@ export class JellyfinService extends EventEmitter {
     return this.state;
   }
 
+  discoverServers(): Promise<DiscoveredServer[]> {
+    return discoverJellyfinServers();
+  }
+
+  async startQuickConnect(
+    input: QuickConnectStartInput
+  ): Promise<QuickConnectRequest> {
+    const profile: ServerProfile = {
+      ...input,
+      username: ''
+    };
+    const baseUrl = buildServerUrl(profile);
+    this.createApi(baseUrl);
+    const [systemResponse, enabledResponse] = await Promise.all([
+      getSystemApi(this.apiValue!).getPublicSystemInfo(),
+      getQuickConnectApi(this.apiValue!).getQuickConnectEnabled()
+    ]);
+    if (!enabledResponse.data) {
+      throw new Error('Quick Connect is disabled on this Jellyfin server.');
+    }
+    const response = await getQuickConnectApi(
+      this.apiValue!
+    ).initiateQuickConnect();
+    const secret = response.data.Secret;
+    const code = response.data.Code;
+    if (!secret || !code) {
+      throw new Error('Jellyfin did not return a Quick Connect code.');
+    }
+    const expiresAt = Date.now() + QUICK_CONNECT_LIFETIME_MS;
+    this.pendingQuickConnect.set(secret, {
+      input,
+      system: systemResponse.data,
+      expiresAt
+    });
+    this.setState({
+      ...initialConnectionState,
+      status: 'connecting',
+      profile
+    });
+    return {
+      secret,
+      code,
+      serverName:
+        systemResponse.data.ServerName ?? (input.displayName || input.host),
+      expiresAt: new Date(expiresAt).toISOString()
+    };
+  }
+
+  async pollQuickConnect(secret: string): Promise<QuickConnectPollResult> {
+    const pending = this.pendingQuickConnect.get(secret);
+    if (!pending || Date.now() >= pending.expiresAt) {
+      this.pendingQuickConnect.delete(secret);
+      return {
+        status: 'expired',
+        connection: null
+      };
+    }
+    const stateResponse = await getQuickConnectApi(
+      this.apiValue!
+    ).getQuickConnectState({ secret });
+    if (!stateResponse.data.Authenticated) {
+      return {
+        status: 'pending',
+        connection: null
+      };
+    }
+    const authentication = await getUserApi(
+      this.apiValue!
+    ).authenticateWithQuickConnect({
+      quickConnectDto: { Secret: secret }
+    });
+    const token = authentication.data.AccessToken;
+    const user = authentication.data.User;
+    if (!token || !user?.Id) {
+      throw new Error('Jellyfin returned incomplete Quick Connect credentials.');
+    }
+    const profile: ServerProfile = {
+      protocol: pending.input.protocol,
+      host: pending.input.host,
+      port: pending.input.port,
+      basePath: pending.input.basePath,
+      displayName: pending.input.displayName,
+      username: user.Name ?? 'Jellyfin user'
+    };
+    const baseUrl = buildServerUrl(profile);
+    this.createApi(baseUrl, token);
+    this.userIdValue = user.Id;
+    await this.config.saveProfile(profile);
+    this.tokenStored = false;
+    if (pending.input.rememberSession) {
+      this.tokenStored = await this.config.saveSession({
+        accessToken: token,
+        userId: user.Id,
+        serverId:
+          authentication.data.ServerId ?? pending.system.Id ?? '',
+        baseUrl
+      });
+    } else {
+      await this.config.clearSession();
+    }
+    this.pendingQuickConnect.delete(secret);
+    this.setState({
+      status: 'connected',
+      profile,
+      server: {
+        id: pending.system.Id ?? authentication.data.ServerId ?? '',
+        name:
+          pending.system.ServerName ??
+          (profile.displayName || profile.host),
+        version: pending.system.Version ?? 'unknown',
+        baseUrl
+      },
+      user: {
+        id: user.Id,
+        name: user.Name ?? profile.username,
+        primaryImageTag: user.PrimaryImageTag ?? null
+      },
+      tokenStoredSecurely: this.tokenStored,
+      error: null
+    });
+    this.emit('authenticated');
+    return {
+      status: 'authenticated',
+      connection: this.state
+    };
+  }
+
+  cancelQuickConnect(secret: string): void {
+    this.pendingQuickConnect.delete(secret);
+    if (this.stateValue.status === 'connecting') {
+      this.apiValue = null;
+      this.userIdValue = null;
+      this.setState({
+        ...initialConnectionState,
+        profile: this.config.profile
+      });
+    }
+  }
+
   async disconnect(): Promise<ConnectionState> {
     try {
       if (this.apiValue) await this.apiValue.logout();
@@ -271,6 +440,7 @@ export class JellyfinService extends EventEmitter {
     this.apiValue = null;
     this.userIdValue = null;
     this.tokenStored = false;
+    this.pendingQuickConnect.clear();
     this.setState({
       ...initialConnectionState,
       profile: this.config.profile
@@ -353,20 +523,31 @@ export class JellyfinService extends EventEmitter {
   }
 
   async getItems(query: CatalogQuery): Promise<ItemsPage> {
+    const filter = query.filter ?? 'all';
+    const filters = filter === 'unplayed'
+      ? [ItemFilter.IsUnplayed]
+      : filter === 'played'
+        ? [ItemFilter.IsPlayed]
+        : filter === 'favorite'
+          ? [ItemFilter.IsFavorite]
+          : undefined;
     const response = await getItemsApi(this.api).getItems({
       userId: this.userId,
       parentId: query.parentId ?? undefined,
       searchTerm: query.searchTerm || undefined,
       startIndex: query.startIndex,
       limit: query.limit,
-      recursive: Boolean(query.searchTerm),
+      recursive: Boolean(query.searchTerm || query.parentId === null),
       includeItemTypes:
         query.includeItemTypes.length > 0
           ? query.includeItemTypes as never
           : undefined,
       fields: ITEM_FIELDS,
-      sortBy: [ItemSortBy.SortName],
-      sortOrder: [SortOrder.Ascending],
+      filters,
+      sortBy: [this.catalogSort(query.sortBy)],
+      sortOrder: [query.sortDescending
+        ? SortOrder.Descending
+        : SortOrder.Ascending],
       enableImages: true,
       enableUserData: true,
       enableTotalRecordCount: true
@@ -386,11 +567,40 @@ export class JellyfinService extends EventEmitter {
   }
 
   async getItem(itemId: string): Promise<ItemDetails> {
-    const response = await getUserLibraryApi(this.api).getItem({
-      itemId,
-      userId: this.userId
-    });
-    const item = response.data;
+    const [response, expandedResponse, specialFeatures, localTrailers] =
+      await Promise.all([
+        getUserLibraryApi(this.api).getItem({
+          itemId,
+          userId: this.userId
+        }),
+        getItemsApi(this.api).getItems({
+          userId: this.userId,
+          ids: [itemId],
+          fields: ITEM_FIELDS,
+          enableImages: true,
+          enableUserData: true
+        }),
+        getUserLibraryApi(this.api).getSpecialFeatures({
+          itemId,
+          userId: this.userId
+        }).then((value: { data: BaseItemDto[] }) => value.data).catch(() => []),
+        getUserLibraryApi(this.api).getLocalTrailers({
+          itemId,
+          userId: this.userId
+        }).then((value: { data: BaseItemDto[] }) => value.data).catch(() => [])
+      ]);
+    const item = expandedResponse.data.Items?.[0] ?? response.data;
+    const canPlay = this.canPlayItem(item);
+    const playbackSources = canPlay
+      ? await getMediaInfoApi(this.api).getPlaybackInfo({
+        itemId,
+        userId: this.userId
+      }).then((value: { data: { MediaSources?: MediaSourceInfo[] } }) =>
+        (value.data.MediaSources ?? []).map((source: MediaSourceInfo) =>
+          this.mapPlaybackSource(source)
+        )
+      ).catch(() => [])
+      : [];
     return {
       ...this.mapItem(item),
       genres: item.Genres ?? [],
@@ -415,13 +625,91 @@ export class JellyfinService extends EventEmitter {
             ? this.imageUrl(person.Id, 'Primary', person.PrimaryImageTag)
             : null
       })),
-      childCount: item.ChildCount ?? 0
+      childCount: item.ChildCount ?? 0,
+      chapters: (item.Chapters ?? []).map((chapter: ChapterInfo, index: number) => ({
+        name: chapter.Name?.trim() || `Chapter ${index + 1}`,
+        startTicks: chapter.StartPositionTicks ?? 0,
+        imageUrl: chapter.ImageTag
+          ? this.chapterImageUrl(itemId, index, chapter.ImageTag)
+          : null
+      } satisfies MediaChapter)),
+      playbackSources,
+      trickplay: this.mapTrickplay(itemId, item.Trickplay),
+      specialFeatures: specialFeatures.map((feature: BaseItemDto) =>
+        this.mapItem(feature)
+      ),
+      localTrailers: localTrailers.map((trailer: BaseItemDto) =>
+        this.mapItem(trailer)
+      )
     };
+  }
+
+  async getNextEpisode(
+    itemId: string,
+    seriesId: string | null
+  ): Promise<MediaItem | null> {
+    if (!seriesId) return null;
+    try {
+      const response = await getTvShowsApi(this.api).getEpisodes({
+        seriesId,
+        userId: this.userId,
+        fields: ITEM_FIELDS,
+        enableImages: true,
+        enableUserData: true,
+        sortBy: ItemSortBy.SortName
+      });
+      const episodes = response.data.Items ?? [];
+      const current = episodes.findIndex((episode: BaseItemDto) => episode.Id === itemId);
+      const next = current >= 0 ? episodes[current + 1] : undefined;
+      return next ? this.mapItem(next) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async setFavorite(itemId: string, favorite: boolean): Promise<ItemDetails> {
+    const api = getUserLibraryApi(this.api);
+    if (favorite) {
+      await api.markFavoriteItem({ itemId, userId: this.userId });
+    } else {
+      await api.unmarkFavoriteItem({ itemId, userId: this.userId });
+    }
+    this.events.emitClient({
+      type: 'catalog-changed',
+      data: { reason: 'library' }
+    });
+    return this.getItem(itemId);
+  }
+
+  async setPlayed(itemId: string, played: boolean): Promise<ItemDetails> {
+    const api = getPlaystateApi(this.api);
+    if (played) {
+      await api.markPlayedItem({ itemId, userId: this.userId });
+    } else {
+      await api.markUnplayedItem({ itemId, userId: this.userId });
+    }
+    this.events.emitClient({
+      type: 'catalog-changed',
+      data: { reason: 'library' }
+    });
+    return this.getItem(itemId);
   }
 
   async proxyImage(requestUrl: string): Promise<Response> {
     if (!this.apiValue) return new Response(null, { status: 401 });
     const request = new URL(requestUrl);
+    if (request.hostname === 'trickplay') {
+      const [itemId, width, index] = request.pathname.split('/').filter(Boolean);
+      if (!itemId || !width || !index || !/^\d+$/.test(width) || !/^\d+$/.test(index)) {
+        return new Response(null, { status: 400 });
+      }
+      const params = new URLSearchParams();
+      const mediaSourceId = request.searchParams.get('mediaSourceId');
+      if (mediaSourceId) params.set('mediaSourceId', mediaSourceId);
+      return this.proxyAuthenticated(
+        `/Videos/${encodeURIComponent(itemId)}/Trickplay/${width}/${index}.jpg?${params.toString()}`
+      );
+    }
     if (request.hostname !== 'image') {
       return new Response(null, { status: 404 });
     }
@@ -433,7 +721,17 @@ export class JellyfinService extends EventEmitter {
     if (tag) query.set('tag', tag);
     query.set('maxWidth', maxWidth);
     query.set('quality', '90');
-    const upstream = `${this.apiValue.basePath}/Items/${encodeURIComponent(itemId)}/Images/${encodeURIComponent(imageType)}?${query.toString()}`;
+    const imageIndex = request.searchParams.get('index');
+    const imagePath = imageIndex && /^\d+$/.test(imageIndex)
+      ? `${encodeURIComponent(imageType)}/${imageIndex}`
+      : encodeURIComponent(imageType);
+    const path = `/Items/${encodeURIComponent(itemId)}/Images/${imagePath}?${query.toString()}`;
+    return this.proxyAuthenticated(path);
+  }
+
+  private async proxyAuthenticated(path: string): Promise<Response> {
+    if (!this.apiValue) return new Response(null, { status: 401 });
+    const upstream = `${this.apiValue.basePath}${path}`;
     try {
       return await fetch(upstream, {
         headers: {
@@ -456,6 +754,15 @@ export class JellyfinService extends EventEmitter {
       maxWidth: String(maxWidth)
     });
     return `jellyclient-media://image/${encodeURIComponent(itemId)}/${imageType}?${params.toString()}`;
+  }
+
+  private chapterImageUrl(itemId: string, index: number, tag: string): string {
+    const params = new URLSearchParams({
+      tag,
+      index: String(index),
+      maxWidth: '640'
+    });
+    return `jellyclient-media://image/${encodeURIComponent(itemId)}/Chapter?${params.toString()}`;
   }
 
   private createApi(baseUrl: string, accessToken = ''): void {
@@ -497,6 +804,9 @@ export class JellyfinService extends EventEmitter {
       name: item.Name ?? 'Untitled',
       type: item.Type ?? 'Unknown',
       seriesName: item.SeriesName ?? null,
+      seriesId: item.SeriesId ?? null,
+      seasonId: item.SeasonId ?? null,
+      parentId: item.ParentId ?? null,
       productionYear: item.ProductionYear ?? null,
       indexLabel,
       overview: item.Overview ?? null,
@@ -509,16 +819,126 @@ export class JellyfinService extends EventEmitter {
       isPlayed: item.UserData?.Played ?? false,
       isFavorite: item.UserData?.IsFavorite ?? false,
       isFolder: item.IsFolder ?? false,
-      canPlay:
-        item.Type === BaseItemKind.Movie ||
-        item.Type === BaseItemKind.Episode ||
-        item.Type === BaseItemKind.Video,
+      canPlay: this.canPlayItem(item),
       mediaFormat: mediaFormatForItem(item),
       imageUrl:
         id && primaryTag ? this.imageUrl(id, 'Primary', primaryTag) : null,
       backdropUrl:
         id && backdropTag ? this.imageUrl(id, 'Backdrop', backdropTag) : null
     };
+  }
+
+  private canPlayItem(item: BaseItemDto): boolean {
+    return item.Type === BaseItemKind.Movie ||
+      item.Type === BaseItemKind.Episode ||
+      item.Type === BaseItemKind.Video;
+  }
+
+  private catalogSort(value?: CatalogQuery['sortBy']): ItemSortBy {
+    const mapping: Record<NonNullable<CatalogQuery['sortBy']>, ItemSortBy> = {
+      SortName: ItemSortBy.SortName,
+      DateCreated: ItemSortBy.DateCreated,
+      PremiereDate: ItemSortBy.PremiereDate,
+      ProductionYear: ItemSortBy.ProductionYear,
+      CommunityRating: ItemSortBy.CommunityRating,
+      Runtime: ItemSortBy.Runtime
+    };
+    return value ? mapping[value] : ItemSortBy.SortName;
+  }
+
+  private mapPlaybackTrack(stream: MediaStream): PlaybackTrackOption {
+    return {
+      index: stream.Index ?? 0,
+      type: stream.Type === MediaStreamType.Audio ? 'audio' : 'subtitle',
+      title:
+        stream.DisplayTitle ??
+        stream.Title ??
+        stream.Language ??
+        'Unknown track',
+      language: stream.Language ?? null,
+      codec: stream.Codec ?? null,
+      channels:
+        stream.ChannelLayout ??
+        (stream.Channels ? `${stream.Channels} channels` : null),
+      default: stream.IsDefault ?? false,
+      forced: stream.IsForced ?? false,
+      hearingImpaired: stream.IsHearingImpaired ?? false,
+      external: stream.IsExternal ?? false
+    };
+  }
+
+  private mapPlaybackSource(source: MediaSourceInfo): PlaybackSourceOption {
+    const streams = source.MediaStreams ?? [];
+    const video = streams.find((stream) =>
+      stream.Type === MediaStreamType.Video
+    );
+    const audioStreams = streams.filter((stream) =>
+      stream.Type === MediaStreamType.Audio
+    );
+    const subtitleStreams = streams.filter((stream) =>
+      stream.Type === MediaStreamType.Subtitle
+    );
+    const defaultAudio = audioStreams.find((stream) => stream.IsDefault) ??
+      audioStreams[0];
+    const resolution = video?.Width && video.Height
+      ? `${video.Width}×${video.Height}`
+      : null;
+    const videoRange = video?.VideoDoViTitle ??
+      (video?.Hdr10PlusPresentFlag ? 'HDR10+' : null) ??
+      video?.VideoRangeType ??
+      video?.VideoRange ??
+      null;
+    return {
+      id: source.Id ?? '',
+      name: source.Name?.trim() || [resolution, source.Container?.toUpperCase()]
+        .filter(Boolean)
+        .join(' · ') || 'Original source',
+      container: source.Container ?? null,
+      size: source.Size ?? null,
+      bitrate: source.Bitrate ?? null,
+      resolution,
+      videoCodec: video?.Codec ?? null,
+      videoRange,
+      dolbyVisionProfile: video?.DvProfile ?? null,
+      audio: defaultAudio?.DisplayTitle ?? defaultAudio?.Codec ?? null,
+      supportsDirectPlay: source.SupportsDirectPlay ?? false,
+      supportsDirectStream: source.SupportsDirectStream ?? false,
+      audioTracks: audioStreams.map((stream) => this.mapPlaybackTrack(stream)),
+      subtitleTracks: subtitleStreams.map((stream) => this.mapPlaybackTrack(stream))
+    };
+  }
+
+  private mapTrickplay(
+    itemId: string,
+    value: BaseItemDto['Trickplay']
+  ): ItemDetails['trickplay'] {
+    const result: ItemDetails['trickplay'] = [];
+    for (const [mediaSourceId, widths] of Object.entries(value ?? {})) {
+      for (const [widthValue, raw] of Object.entries(widths ?? {})) {
+        const info = raw as TrickplayInfoDto;
+        const width = info.Width ?? Number(widthValue);
+        if (
+          !Number.isFinite(width) ||
+          !info.Height ||
+          !info.TileWidth ||
+          !info.TileHeight ||
+          !info.ThumbnailCount ||
+          !info.Interval
+        ) continue;
+        result.push({
+          mediaSourceId,
+          width,
+          height: info.Height,
+          tileWidth: info.TileWidth,
+          tileHeight: info.TileHeight,
+          thumbnailCount: info.ThumbnailCount,
+          intervalMs: info.Interval,
+          tileUrlTemplate:
+            `jellyclient-media://trickplay/${encodeURIComponent(itemId)}/${width}/{index}?mediaSourceId=${encodeURIComponent(mediaSourceId)}`
+        });
+      }
+    }
+    return result.sort((left, right) => right.width - left.width);
   }
 
   private setState(state: ConnectionState): void {

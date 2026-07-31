@@ -41,6 +41,7 @@ const options: VidaaPlaybackOptions = {
     name: 'Episode',
     type: 'Episode',
     seriesName: 'Series',
+    seriesId: 'series',
     indexLabel: 'S01 E01',
     productionYear: 2026,
     overview: null,
@@ -57,6 +58,7 @@ const options: VidaaPlaybackOptions = {
       audio: '5.1'
     }
   },
+  sources: [],
   mediaSourceId: 'source',
   container: 'mkv',
   audioTracks: [
@@ -68,7 +70,9 @@ const options: VidaaPlaybackOptions = {
     track(4, 'subtitle', 'bul', { isForced: true })
   ],
   defaultAudioIndex: 1,
-  defaultSubtitleIndex: 3
+  defaultSubtitleIndex: 3,
+  chapters: [],
+  nextItem: null
 };
 
 describe('VIDAA player settings', () => {

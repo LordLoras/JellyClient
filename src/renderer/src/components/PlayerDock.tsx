@@ -5,13 +5,18 @@ import {
   Maximize2,
   Pause,
   Play,
+  SlidersHorizontal,
+  StepBack,
+  StepForward,
   Square,
   Volume2,
   VolumeX
 } from 'lucide-react';
 import {
   useState,
-  type ChangeEvent
+  type ChangeEvent,
+  type CSSProperties,
+  type MouseEvent
 } from 'react';
 import type {
   PlaybackState,
@@ -27,8 +32,9 @@ interface Props {
 }
 
 export function PlayerDock({ playback, syncPlay, onAction }: Props) {
-  const [showTracks, setShowTracks] = useState<'audio' | 'subtitle' | null>(null);
+  const [showTracks, setShowTracks] = useState<'audio' | 'subtitle' | 'playback' | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [scrub, setScrub] = useState<{ percent: number; seconds: number } | null>(null);
   if (!playback.item || playback.status === 'idle') return null;
 
   const progress =
@@ -37,6 +43,10 @@ export function PlayerDock({ playback, syncPlay, onAction }: Props) {
       : 0;
   const audioTracks = playback.tracks.filter((track) => track.type === 'audio');
   const subtitleTracks = playback.tracks.filter((track) => track.type === 'subtitle');
+  const trickplay = playback.trickplay[0] ?? null;
+  const preview = scrub && trickplay
+    ? trickplayFrame(trickplay, scrub.seconds)
+    : null;
 
   const seek = (event: ChangeEvent<HTMLInputElement>) => {
     const position =
@@ -46,7 +56,33 @@ export function PlayerDock({ playback, syncPlay, onAction }: Props) {
 
   return (
     <aside className="player-dock">
-      <div className="player-dock__progress">
+      {playback.nextItem && playback.postPlaySecondsRemaining !== null && !playback.postPlayCanceled && (
+        <div className="post-play-card">
+          {playback.nextItem.imageUrl && <img src={playback.nextItem.imageUrl} alt="" />}
+          <span>
+            <small>UP NEXT · {playback.postPlaySecondsRemaining}s</small>
+            <strong>{playback.nextItem.seriesName ?? playback.nextItem.name}</strong>
+            {playback.nextItem.seriesName && <em>{playback.nextItem.indexLabel} · {playback.nextItem.name}</em>}
+          </span>
+          <button className="button button--primary" onClick={() => onAction({ type: 'play-next' })}>Play now</button>
+          <button className="button button--glass" onClick={() => onAction({ type: 'cancel-post-play' })}>Cancel</button>
+        </div>
+      )}
+      <div
+        className="player-dock__progress"
+        onMouseLeave={() => setScrub(null)}
+        onMouseMove={(event: MouseEvent<HTMLDivElement>) => {
+          const bounds = event.currentTarget.getBoundingClientRect();
+          const percent = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
+          setScrub({ percent, seconds: percent * playback.durationSeconds });
+        }}
+      >
+        {preview && scrub && (
+          <div className="scrub-preview" style={{ left: `${scrub.percent * 100}%` }}>
+            <i style={preview.style} />
+            <span>{formatDuration(scrub.seconds)}</span>
+          </div>
+        )}
         <input
           aria-label="Playback position"
           type="range"
@@ -74,6 +110,17 @@ export function PlayerDock({ playback, syncPlay, onAction }: Props) {
         </div>
 
         <div className="player-dock__transport">
+          {playback.chapters.length > 0 && (
+            <button
+              className="dock-icon dock-icon--small"
+              disabled={(playback.currentChapterIndex ?? 0) <= 0}
+              onClick={() => onAction({
+                type: 'chapter',
+                index: Math.max(0, (playback.currentChapterIndex ?? 0) - 1)
+              })}
+              aria-label="Previous chapter"
+            ><StepBack /></button>
+          )}
           <button
             className="dock-icon"
             onClick={() => onAction({ type: playback.paused ? 'play' : 'pause' })}
@@ -84,6 +131,20 @@ export function PlayerDock({ playback, syncPlay, onAction }: Props) {
           <button className="dock-icon dock-icon--small" onClick={() => onAction({ type: 'stop' })} aria-label="Stop">
             <Square fill="currentColor" />
           </button>
+          {playback.chapters.length > 0 && (
+            <button
+              className="dock-icon dock-icon--small"
+              disabled={(playback.currentChapterIndex ?? 0) >= playback.chapters.length - 1}
+              onClick={() => onAction({
+                type: 'chapter',
+                index: Math.min(
+                  playback.chapters.length - 1,
+                  (playback.currentChapterIndex ?? 0) + 1
+                )
+              })}
+              aria-label="Next chapter"
+            ><StepForward /></button>
+          )}
           <span className="player-dock__time">
             {formatDuration(playback.positionSeconds)}
             <i>/</i>
@@ -92,6 +153,52 @@ export function PlayerDock({ playback, syncPlay, onAction }: Props) {
         </div>
 
         <div className="player-dock__tools">
+          <div className="dock-popover-wrap">
+            <button
+              className={`dock-tool${showTracks === 'playback' ? ' is-active' : ''}`}
+              onClick={() => setShowTracks(showTracks === 'playback' ? null : 'playback')}
+            >
+              <SlidersHorizontal /><span>{playback.speed}×</span><ChevronDown />
+            </button>
+            {showTracks === 'playback' && (
+              <div className="dock-popover dock-popover--controls">
+                <strong>Playback</strong>
+                <label>
+                  <span>Speed</span>
+                  <select
+                    value={playback.speed}
+                    onChange={(event) => onAction({ type: 'speed', speed: Number(event.target.value) })}
+                  >
+                    {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((speed) => (
+                      <option value={speed} key={speed}>{speed}×</option>
+                    ))}
+                  </select>
+                </label>
+                <DelayControl
+                  label="Subtitles"
+                  value={playback.subtitleDelaySeconds}
+                  onChange={(seconds) => onAction({ type: 'subtitle-delay', seconds })}
+                />
+                <DelayControl
+                  label="Audio"
+                  value={playback.audioDelaySeconds}
+                  onChange={(seconds) => onAction({ type: 'audio-delay', seconds })}
+                />
+                {playback.chapters.length > 0 && (
+                  <div className="dock-chapters">
+                    <span>Chapters</span>
+                    {playback.chapters.map((chapter, index) => (
+                      <button
+                        className={playback.currentChapterIndex === index ? 'is-selected' : ''}
+                        key={`${chapter.startTicks}-${chapter.name}`}
+                        onClick={() => onAction({ type: 'chapter', index })}
+                      >{chapter.name || `Chapter ${index + 1}`}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
           <div className="dock-popover-wrap">
             <button
               className={`dock-tool${showTracks === 'audio' ? ' is-active' : ''}`}
@@ -191,5 +298,51 @@ export function PlayerDock({ playback, syncPlay, onAction }: Props) {
         />
       )}
     </aside>
+  );
+}
+
+function trickplayFrame(
+  track: PlaybackState['trickplay'][number],
+  seconds: number
+): { style: CSSProperties } {
+  const frame = Math.min(
+    Math.max(0, track.thumbnailCount - 1),
+    Math.floor((seconds * 1_000) / track.intervalMs)
+  );
+  const framesPerTile = track.tileWidth * track.tileHeight;
+  const tile = Math.floor(frame / framesPerTile);
+  const withinTile = frame % framesPerTile;
+  const column = withinTile % track.tileWidth;
+  const row = Math.floor(withinTile / track.tileWidth);
+  return {
+    style: {
+      width: track.width,
+      height: track.height,
+      backgroundImage: `url("${track.tileUrlTemplate.replace('{index}', String(tile))}")`,
+      backgroundSize: `${track.tileWidth * 100}% ${track.tileHeight * 100}%`,
+      backgroundPosition: `${track.tileWidth > 1 ? (column / (track.tileWidth - 1)) * 100 : 0}% ${track.tileHeight > 1 ? (row / (track.tileHeight - 1)) * 100 : 0}%`
+    }
+  };
+}
+
+function DelayControl({
+  label,
+  value,
+  onChange
+}: {
+  label: string;
+  value: number;
+  onChange(value: number): void;
+}) {
+  const step = (amount: number) => onChange(
+    Math.round((value + amount) * 10) / 10
+  );
+  return (
+    <div className="delay-control">
+      <span>{label}</span>
+      <button onClick={() => step(-0.1)} aria-label={`Decrease ${label.toLowerCase()} delay`}>−</button>
+      <b>{value > 0 ? '+' : ''}{value.toFixed(1)} s</b>
+      <button onClick={() => step(0.1)} aria-label={`Increase ${label.toLowerCase()} delay`}>+</button>
+    </div>
   );
 }

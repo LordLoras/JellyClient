@@ -1,5 +1,5 @@
 export const APP_NAME = 'JellyClient';
-export const APP_VERSION = '0.2.0';
+export const APP_VERSION = '0.3.0';
 export const TICKS_PER_SECOND = 10_000_000;
 
 export type ConnectionStatus =
@@ -21,6 +21,14 @@ export type PlaybackStatus =
 
 export type HdrMode = 'auto' | 'passthrough' | 'tone-map';
 export type GpuApi = 'd3d11' | 'vulkan';
+export type CatalogSort =
+  | 'SortName'
+  | 'DateCreated'
+  | 'PremiereDate'
+  | 'ProductionYear'
+  | 'CommunityRating'
+  | 'Runtime';
+export type CatalogFilter = 'all' | 'unplayed' | 'played' | 'favorite';
 
 export interface ServerProfile {
   protocol: 'http' | 'https';
@@ -36,6 +44,37 @@ export interface ConnectionInput extends ServerProfile {
   rememberSession: boolean;
 }
 
+export type ServerAddress = Omit<ServerProfile, 'username'>;
+
+export interface DiscoveredServer {
+  id: string;
+  name: string;
+  address: string;
+  endpointAddress: string | null;
+}
+
+export interface QuickConnectStartInput extends ServerAddress {
+  rememberSession: boolean;
+}
+
+export interface QuickConnectRequest {
+  secret: string;
+  code: string;
+  serverName: string;
+  expiresAt: string;
+}
+
+export interface QuickConnectPollResult {
+  status: 'pending' | 'authenticated' | 'expired';
+  connection: ConnectionState | null;
+}
+
+export interface SeriesPlaybackPreference {
+  audioLanguage: string | null;
+  subtitleLanguage: string | null;
+  subtitlesEnabled: boolean;
+}
+
 export interface PlayerSettings {
   mpvPath: string;
   hdrMode: HdrMode;
@@ -44,7 +83,19 @@ export interface PlayerSettings {
   alwaysOnTop: boolean;
   fullscreenOnPlay: boolean;
   autoEnableSubtitles: boolean;
+  preferredAudioLanguage: string;
   preferredSubtitleLanguage: string;
+  preferForcedSubtitles: boolean;
+  avoidSdhSubtitles: boolean;
+  rememberSeriesPreferences: boolean;
+  seriesPreferences: Record<string, SeriesPlaybackPreference>;
+  playbackSpeed: number;
+  subtitleDelaySeconds: number;
+  audioDelaySeconds: number;
+  autoSkipIntro: boolean;
+  autoSkipOutro: boolean;
+  autoPlayNext: boolean;
+  nextEpisodeCountdownSeconds: number;
 }
 
 export interface SyncPlaySettings {
@@ -98,6 +149,9 @@ export interface MediaItem {
   name: string;
   type: string;
   seriesName: string | null;
+  seriesId: string | null;
+  seasonId: string | null;
+  parentId: string | null;
   productionYear: number | null;
   indexLabel: string | null;
   overview: string | null;
@@ -114,6 +168,53 @@ export interface MediaItem {
   mediaFormat: MediaFormatInfo;
   imageUrl: string | null;
   backdropUrl: string | null;
+}
+
+export interface MediaChapter {
+  name: string;
+  startTicks: number;
+  imageUrl: string | null;
+}
+
+export interface PlaybackTrackOption {
+  index: number;
+  type: 'audio' | 'subtitle';
+  title: string;
+  language: string | null;
+  codec: string | null;
+  channels: string | null;
+  default: boolean;
+  forced: boolean;
+  hearingImpaired: boolean;
+  external: boolean;
+}
+
+export interface PlaybackSourceOption {
+  id: string;
+  name: string;
+  container: string | null;
+  size: number | null;
+  bitrate: number | null;
+  resolution: string | null;
+  videoCodec: string | null;
+  videoRange: string | null;
+  dolbyVisionProfile: number | null;
+  audio: string | null;
+  supportsDirectPlay: boolean;
+  supportsDirectStream: boolean;
+  audioTracks: PlaybackTrackOption[];
+  subtitleTracks: PlaybackTrackOption[];
+}
+
+export interface TrickplayOption {
+  mediaSourceId: string;
+  width: number;
+  height: number;
+  tileWidth: number;
+  tileHeight: number;
+  thumbnailCount: number;
+  intervalMs: number;
+  tileUrlTemplate: string;
 }
 
 export interface HomePayload {
@@ -140,6 +241,11 @@ export interface ItemDetails extends MediaItem {
     imageUrl: string | null;
   }>;
   childCount: number;
+  chapters: MediaChapter[];
+  trickplay: TrickplayOption[];
+  playbackSources: PlaybackSourceOption[];
+  specialFeatures: MediaItem[];
+  localTrailers: MediaItem[];
 }
 
 export interface TrackInfo {
@@ -217,6 +323,15 @@ export interface PlaybackState {
   volume: number;
   muted: boolean;
   fullscreen: boolean;
+  speed: number;
+  subtitleDelaySeconds: number;
+  audioDelaySeconds: number;
+  chapters: MediaChapter[];
+  trickplay: TrickplayOption[];
+  currentChapterIndex: number | null;
+  nextItem: MediaItem | null;
+  postPlaySecondsRemaining: number | null;
+  postPlayCanceled: boolean;
   tracks: TrackInfo[];
   error: string | null;
   diagnostics: PlaybackDiagnostics;
@@ -263,11 +378,16 @@ export interface CatalogQuery {
   startIndex: number;
   limit: number;
   includeItemTypes: string[];
+  sortBy?: CatalogSort | undefined;
+  sortDescending?: boolean | undefined;
+  filter?: CatalogFilter | undefined;
 }
 
 export interface PlayMediaInput {
   itemId: string;
   startPositionTicks: number;
+  mediaSourceId: string | null;
+  maxStreamingBitrate: number | null;
   audioStreamIndex: number | null;
   subtitleStreamIndex: number | null;
 }
@@ -291,11 +411,17 @@ export type ClientEvent =
 export interface JellyClientApi {
   bootstrap(): Promise<AppBootstrap>;
   connect(input: ConnectionInput): Promise<ConnectionState>;
+  discoverServers(): Promise<DiscoveredServer[]>;
+  startQuickConnect(input: QuickConnectStartInput): Promise<QuickConnectRequest>;
+  pollQuickConnect(secret: string): Promise<QuickConnectPollResult>;
+  cancelQuickConnect(secret: string): Promise<void>;
   disconnect(): Promise<ConnectionState>;
   getHome(): Promise<HomePayload>;
   discardPlaybackProgress(itemId: string): Promise<HomePayload>;
   getItems(query: CatalogQuery): Promise<ItemsPage>;
   getItem(itemId: string): Promise<ItemDetails>;
+  setFavorite(itemId: string, favorite: boolean): Promise<ItemDetails>;
+  setPlayed(itemId: string, played: boolean): Promise<ItemDetails>;
   play(input: PlayMediaInput): Promise<PlaybackState>;
   playbackAction(
     action:
@@ -307,6 +433,12 @@ export interface JellyClientApi {
       | { type: 'mute'; muted: boolean }
       | { type: 'fullscreen'; fullscreen: boolean }
       | { type: 'toggle-stats' }
+      | { type: 'speed'; speed: number }
+      | { type: 'subtitle-delay'; seconds: number }
+      | { type: 'audio-delay'; seconds: number }
+      | { type: 'chapter'; index: number }
+      | { type: 'cancel-post-play' }
+      | { type: 'play-next' }
       | { type: 'select-track'; trackType: 'audio' | 'subtitle'; id: number | null }
   ): Promise<PlaybackState>;
   copyDebugReport(report: string): Promise<void>;

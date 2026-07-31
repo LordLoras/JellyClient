@@ -22,6 +22,12 @@ export interface VidaaPlayerSettings {
   subtitlePosition: VidaaSubtitlePosition;
   seekSeconds: VidaaSeekSeconds;
   controlTimeoutSeconds: VidaaControlTimeout;
+  playbackSpeed: number;
+  subtitleDelaySeconds: number;
+  autoSkipIntro: boolean;
+  autoSkipOutro: boolean;
+  autoPlayNext: boolean;
+  nextEpisodeCountdownSeconds: number;
 }
 
 export const DEFAULT_VIDAA_PLAYER_SETTINGS: VidaaPlayerSettings = {
@@ -34,7 +40,13 @@ export const DEFAULT_VIDAA_PLAYER_SETTINGS: VidaaPlayerSettings = {
   subtitleBackground: 'shadow',
   subtitlePosition: 'lower',
   seekSeconds: 10,
-  controlTimeoutSeconds: 3.5
+  controlTimeoutSeconds: 3.5,
+  playbackSpeed: 1,
+  subtitleDelaySeconds: 0,
+  autoSkipIntro: false,
+  autoSkipOutro: false,
+  autoPlayNext: true,
+  nextEpisodeCountdownSeconds: 10
 };
 
 const STORAGE_KEY = 'jellyclient-vidaa-player-settings-v1';
@@ -53,6 +65,8 @@ const SUBTITLE_BACKGROUNDS = new Set<VidaaSubtitleBackground>([
 const SUBTITLE_POSITIONS = new Set<VidaaSubtitlePosition>(['lower', 'higher']);
 const SEEK_SECONDS = new Set<VidaaSeekSeconds>([10, 30, 60]);
 const CONTROL_TIMEOUTS = new Set<VidaaControlTimeout>([0, 3.5, 6, 10]);
+const PLAYBACK_SPEEDS = new Set([0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]);
+const NEXT_COUNTDOWNS = new Set([5, 10, 15, 20, 30]);
 
 function language(value: unknown, fallback: string): string {
   if (typeof value !== 'string') return fallback;
@@ -100,7 +114,31 @@ export function parsePlayerSettings(value: unknown): VidaaPlayerSettings {
       candidate.controlTimeoutSeconds as VidaaControlTimeout
     )
       ? candidate.controlTimeoutSeconds as VidaaControlTimeout
-      : DEFAULT_VIDAA_PLAYER_SETTINGS.controlTimeoutSeconds
+      : DEFAULT_VIDAA_PLAYER_SETTINGS.controlTimeoutSeconds,
+    playbackSpeed: PLAYBACK_SPEEDS.has(candidate.playbackSpeed ?? NaN)
+      ? candidate.playbackSpeed!
+      : DEFAULT_VIDAA_PLAYER_SETTINGS.playbackSpeed,
+    subtitleDelaySeconds:
+      typeof candidate.subtitleDelaySeconds === 'number' &&
+      Number.isFinite(candidate.subtitleDelaySeconds) &&
+      candidate.subtitleDelaySeconds >= -10 &&
+      candidate.subtitleDelaySeconds <= 10
+        ? candidate.subtitleDelaySeconds
+        : DEFAULT_VIDAA_PLAYER_SETTINGS.subtitleDelaySeconds,
+    autoSkipIntro: typeof candidate.autoSkipIntro === 'boolean'
+      ? candidate.autoSkipIntro
+      : DEFAULT_VIDAA_PLAYER_SETTINGS.autoSkipIntro,
+    autoSkipOutro: typeof candidate.autoSkipOutro === 'boolean'
+      ? candidate.autoSkipOutro
+      : DEFAULT_VIDAA_PLAYER_SETTINGS.autoSkipOutro,
+    autoPlayNext: typeof candidate.autoPlayNext === 'boolean'
+      ? candidate.autoPlayNext
+      : DEFAULT_VIDAA_PLAYER_SETTINGS.autoPlayNext,
+    nextEpisodeCountdownSeconds: NEXT_COUNTDOWNS.has(
+      candidate.nextEpisodeCountdownSeconds ?? NaN
+    )
+      ? candidate.nextEpisodeCountdownSeconds!
+      : DEFAULT_VIDAA_PLAYER_SETTINGS.nextEpisodeCountdownSeconds
   };
 }
 

@@ -58,8 +58,9 @@ On the PC, open:
 http://localhost/connect
 ```
 
-Enter the Jellyfin server address, username, and password. The page then shows
-the address to open on the television, for example:
+Enter the Jellyfin server address, then either enter a username and password or
+use Quick Connect. The page then shows the address to open on the television,
+for example:
 
 ```text
 http://192.168.1.20/
@@ -101,13 +102,19 @@ Remove-Item Env:VIDAA_PORT
 Select a title to choose its audio and subtitle tracks, then start playback.
 The player supports:
 
+- Library browsing and search with television remote navigation.
 - Play, pause, stop, and forward or backward seek.
 - Audio-track changes while watching. The video restarts at the same position
   with the newly selected stream.
 - Text-subtitle changes without restarting the video.
 - A settings menu for preferred languages, default subtitles, subtitle size,
-  color, background, position, seek length, and control timeout.
+  color, background, position, timing, playback speed, seek length, and control
+  timeout.
+- Media-version and streaming-quality selection before playback.
+- Chapter navigation from the in-player options menu.
+- A cancelable Up Next countdown for episodes.
 - `N` for Skip Intro or Skip Ending while the matching prompt is visible.
+- Optional automatic intro and ending skips.
 
 The skip prompt appears only when Jellyfin provides Intro or Outro segment
 data for that episode. The on-screen button can also be clicked with a pointer.

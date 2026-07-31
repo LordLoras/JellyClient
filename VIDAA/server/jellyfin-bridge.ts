@@ -18,12 +18,14 @@ import {
 import type {
   VidaaHomePayload,
   VidaaJellyfinSession,
+  VidaaItemsPage,
   VidaaLibrary,
   VidaaMediaItem,
   VidaaPlaybackOptions,
   VidaaPlaybackPlan,
   VidaaPlaybackReport,
   VidaaPlaybackRequest,
+  VidaaPlaybackSource,
   VidaaPlayMethod,
   VidaaTrackChoice
 } from '../src/jellyfin-types.js';
@@ -31,7 +33,7 @@ import type {
 const VIDAA_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const DEFAULT_SESSION_PATH = resolve(VIDAA_ROOT, 'jellyfin.local.json');
 const CLIENT_NAME = 'JellyClient VIDAA';
-const CLIENT_VERSION = '0.2.0';
+const CLIENT_VERSION = '0.3.0';
 const TICKS_PER_SECOND = 10_000_000;
 const TEXT_SUBTITLE_CODECS = new Set([
   'ass',
@@ -91,6 +93,7 @@ interface RawMediaStream {
 
 interface RawMediaSource {
   Id?: string;
+  Name?: string | null;
   Container?: string | null;
   SupportsDirectPlay?: boolean;
   SupportsDirectStream?: boolean;
@@ -116,6 +119,7 @@ interface RawItem {
   Name?: string | null;
   Type?: string | null;
   SeriesName?: string | null;
+  SeriesId?: string | null;
   ParentIndexNumber?: number | null;
   IndexNumber?: number | null;
   ProductionYear?: number | null;
@@ -125,6 +129,10 @@ interface RawItem {
   ImageTags?: Record<string, string>;
   BackdropImageTags?: string[];
   MediaSources?: RawMediaSource[];
+  Chapters?: Array<{
+    Name?: string | null;
+    StartPositionTicks?: number | null;
+  }>;
   UserData?: {
     PlaybackPositionTicks?: number;
     PlayedPercentage?: number;
@@ -136,7 +144,17 @@ interface Ticket {
   expiresAt: number;
 }
 
+interface PendingQuickConnect {
+  baseUrl: string;
+  deviceId: string;
+  secret: string;
+  code: string;
+  expiresAt: number;
+  system: { Id?: string; ServerName?: string; Version?: string };
+}
+
 const tickets = new Map<string, Ticket>();
+const pendingQuickConnect = new Map<string, PendingQuickConnect>();
 
 function sessionPath(): string {
   const override = process.env.VIDAA_JELLYFIN_CONFIG_PATH?.trim();
@@ -346,6 +364,7 @@ function mapItem(item: RawItem): VidaaMediaItem {
     name: item.Name ?? 'Untitled',
     type: item.Type ?? 'Unknown',
     seriesName: item.SeriesName ?? null,
+    seriesId: item.SeriesId ?? null,
     indexLabel: isEpisode
       ? `S${String(item.ParentIndexNumber ?? 0).padStart(2, '0')} E${String(item.IndexNumber ?? 0).padStart(2, '0')}`
       : null,
@@ -375,7 +394,9 @@ function itemFields(): string {
     'Overview',
     'PrimaryImageAspectRatio',
     'MediaStreams',
-    'MediaSources'
+    'MediaSources',
+    'Chapters',
+    'ParentId'
   ].join(',');
 }
 
@@ -423,6 +444,49 @@ async function home(session: StoredSession): Promise<VidaaHomePayload> {
   };
 }
 
+async function browseItems(
+  session: StoredSession,
+  parentId: string | null,
+  searchTerm: string
+): Promise<VidaaItemsPage> {
+  const params = new URLSearchParams({
+    UserId: session.userId,
+    StartIndex: '0',
+    Limit: '200',
+    Fields: itemFields(),
+    EnableImages: 'true',
+    EnableUserData: 'true',
+    EnableTotalRecordCount: 'true',
+    SortBy: 'SortName',
+    SortOrder: 'Ascending'
+  });
+  if (parentId) params.set('ParentId', parentId);
+  if (searchTerm) {
+    params.set('SearchTerm', searchTerm);
+    params.set('Recursive', 'true');
+    params.set('IncludeItemTypes', 'Movie,Series,Season,Episode,Video,BoxSet');
+  }
+  const result = await jellyfinJson<{
+    Items?: RawItem[];
+    TotalRecordCount?: number;
+  }>(session, `/Items?${params.toString()}`);
+  const items = uniqueItems(result.Items ?? []).filter((item) =>
+    Boolean(item.Id) && (
+      Boolean(item.IsFolder) ||
+      item.Type === 'Movie' ||
+      item.Type === 'Episode' ||
+      item.Type === 'Video' ||
+      item.Type === 'Series' ||
+      item.Type === 'Season' ||
+      item.Type === 'BoxSet'
+    )
+  );
+  return {
+    items: items.map(mapItem),
+    totalRecordCount: result.TotalRecordCount ?? items.length
+  };
+}
+
 function mapTrack(stream: RawMediaStream): VidaaTrackChoice | null {
   if (typeof stream.Index !== 'number') return null;
   const type = stream.Type === 'Audio'
@@ -466,30 +530,76 @@ async function playbackOptions(
     session,
     `/Items/${encodeURIComponent(itemId)}/PlaybackInfo?UserId=${user}`
   );
-  const source = discovery.MediaSources?.[0];
+  const source = discovery.MediaSources?.find((candidate) => candidate.SupportsDirectPlay) ??
+    discovery.MediaSources?.[0];
   if (!source?.Id) throw new Error('Jellyfin did not return a media source.');
   const rawItem = await jellyfinJson<RawItem>(
     session,
     `/Users/${user}/Items/${encodeURIComponent(itemId)}?Fields=${encodeURIComponent(itemFields())}`
   );
-  const tracks = (source.MediaStreams ?? [])
-    .map(mapTrack)
-    .filter((track): track is VidaaTrackChoice => Boolean(track));
-  const audioTracks = tracks.filter((track) => track.type === 'audio');
-  const subtitleTracks = tracks.filter((track) => track.type === 'subtitle');
-  const textEnglish = subtitleTracks.filter((track) => track.isText);
+  const sources = (discovery.MediaSources ?? []).flatMap((candidate) => {
+    if (!candidate.Id) return [];
+    const tracks = (candidate.MediaStreams ?? [])
+      .map(mapTrack)
+      .filter((track): track is VidaaTrackChoice => Boolean(track));
+    const audioTracks = tracks.filter((track) => track.type === 'audio');
+    const subtitleTracks = tracks.filter((track) => track.type === 'subtitle');
+    const video = candidate.MediaStreams?.find((stream) => stream.Type === 'Video');
+    const height = video?.Height ?? null;
+    return [{
+      id: candidate.Id,
+      name: candidate.Name?.trim() || `Version ${candidate.Id.slice(0, 6)}`,
+      container: candidate.Container ?? null,
+      resolution: height ? height >= 2160 ? '4K' : height >= 1080 ? '1080p' : `${height}p` : null,
+      videoRange: videoRange(video),
+      videoCodec: video?.Codec ?? null,
+      supportsDirectPlay: Boolean(candidate.SupportsDirectPlay),
+      supportsDirectStream: Boolean(candidate.SupportsDirectStream),
+      audioTracks,
+      subtitleTracks,
+      defaultAudioIndex: candidate.DefaultAudioStreamIndex ??
+        audioTracks.find((track) => track.isDefault)?.index ??
+        audioTracks[0]?.index ?? null,
+      defaultSubtitleIndex: preferredEnglish(
+        subtitleTracks.filter((track) => track.isText)
+      )
+    } satisfies VidaaPlaybackSource];
+  });
+  const selected = sources.find((candidate) => candidate.id === source.Id)!;
+  const nextItem = await nextEpisode(session, rawItem);
   return {
     item: mapItem(rawItem),
+    sources,
     mediaSourceId: source.Id,
-    container: source.Container ?? null,
-    audioTracks,
-    subtitleTracks,
-    defaultAudioIndex: source.DefaultAudioStreamIndex ??
-      audioTracks.find((track) => track.isDefault)?.index ??
-      audioTracks[0]?.index ??
-      null,
-    defaultSubtitleIndex: preferredEnglish(textEnglish)
+    container: selected.container,
+    audioTracks: selected.audioTracks,
+    subtitleTracks: selected.subtitleTracks,
+    defaultAudioIndex: selected.defaultAudioIndex,
+    defaultSubtitleIndex: selected.defaultSubtitleIndex,
+    chapters: (rawItem.Chapters ?? []).map((chapter, index) => ({
+      name: chapter.Name?.trim() || `Chapter ${index + 1}`,
+      startTicks: chapter.StartPositionTicks ?? 0
+    })),
+    nextItem
   };
+}
+
+async function nextEpisode(
+  session: StoredSession,
+  item: RawItem
+): Promise<VidaaMediaItem | null> {
+  if (item.Type !== 'Episode' || !item.SeriesId || !item.Id) return null;
+  try {
+    const response = await jellyfinJson<{ Items?: RawItem[] }>(
+      session,
+      `/Shows/${encodeURIComponent(item.SeriesId)}/Episodes?UserId=${encodeURIComponent(session.userId)}&Fields=${encodeURIComponent(itemFields())}&EnableImages=true&EnableUserData=true&SortBy=SortName`
+    );
+    const episodes = response.Items ?? [];
+    const index = episodes.findIndex((episode) => episode.Id === item.Id);
+    return index >= 0 && episodes[index + 1] ? mapItem(episodes[index + 1]!) : null;
+  } catch {
+    return null;
+  }
 }
 
 async function mediaSegments(
@@ -617,7 +727,7 @@ async function planPlayback(
       StartTimeTicks: input.startPositionTicks,
       AudioStreamIndex: input.audioStreamIndex,
       SubtitleStreamIndex: null,
-      MaxStreamingBitrate: 120_000_000,
+      MaxStreamingBitrate: input.maxStreamingBitrate ?? 120_000_000,
       MaxAudioChannels: 6,
       EnableDirectPlay: true,
       EnableDirectStream: true,
@@ -693,6 +803,8 @@ async function planPlayback(
     audioStreamIndex: input.audioStreamIndex,
     subtitleStreamIndex: selectedSubtitle?.index ?? null,
     segments,
+    chapters: options.chapters,
+    nextItem: options.nextItem,
     playSessionId,
     mediaSourceId: source.Id,
     playMethod: effectiveMethod,
@@ -815,6 +927,106 @@ async function authenticate(input: unknown): Promise<StoredSession> {
   };
 }
 
+async function startQuickConnect(input: unknown): Promise<{
+  status: 'pending';
+  secret: string;
+  code: string;
+  serverName: string;
+}> {
+  const candidate = input as { baseUrl?: unknown };
+  const baseUrl = cleanBaseUrl(candidate?.baseUrl);
+  const deviceId = randomUUID();
+  const headers = { Authorization: clientAuthorization(deviceId) };
+  const [systemResponse, enabledResponse] = await Promise.all([
+    fetch(`${baseUrl}/System/Info/Public`, { headers }),
+    fetch(`${baseUrl}/QuickConnect/Enabled`, { headers })
+  ]);
+  if (!systemResponse.ok) throw new Error(`Could not reach Jellyfin (${systemResponse.status}).`);
+  if (!enabledResponse.ok || !(await enabledResponse.json() as boolean)) {
+    throw new Error('Quick Connect is disabled on this Jellyfin server.');
+  }
+  const system = await systemResponse.json() as PendingQuickConnect['system'];
+  const initiation = await fetch(`${baseUrl}/QuickConnect/Initiate`, {
+    method: 'POST',
+    headers
+  });
+  if (!initiation.ok) throw new Error(`Quick Connect could not start (${initiation.status}).`);
+  const request = await initiation.json() as { Secret?: string; Code?: string };
+  if (!request.Secret || !request.Code) {
+    throw new Error('Jellyfin returned an incomplete Quick Connect request.');
+  }
+  const pending: PendingQuickConnect = {
+    baseUrl,
+    deviceId,
+    secret: request.Secret,
+    code: request.Code,
+    expiresAt: Date.now() + 5 * 60_000,
+    system
+  };
+  pendingQuickConnect.set(pending.secret, pending);
+  return {
+    status: 'pending',
+    secret: pending.secret,
+    code: pending.code,
+    serverName: system.ServerName ?? 'Jellyfin'
+  };
+}
+
+async function pollQuickConnect(secret: string): Promise<{
+  status: 'pending' | 'connected' | 'expired';
+  session: VidaaJellyfinSession | null;
+}> {
+  const pending = pendingQuickConnect.get(secret);
+  if (!pending || Date.now() >= pending.expiresAt) {
+    pendingQuickConnect.delete(secret);
+    return { status: 'expired', session: null };
+  }
+  const headers = { Authorization: clientAuthorization(pending.deviceId) };
+  const stateResponse = await fetch(
+    `${pending.baseUrl}/QuickConnect/Connect?secret=${encodeURIComponent(secret)}`,
+    { headers }
+  );
+  if (!stateResponse.ok) throw new Error(`Quick Connect polling failed (${stateResponse.status}).`);
+  const state = await stateResponse.json() as { Authenticated?: boolean };
+  if (!state.Authenticated) return { status: 'pending', session: null };
+  const authResponse = await fetch(
+    `${pending.baseUrl}/Users/AuthenticateWithQuickConnect`,
+    {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ Secret: secret })
+    }
+  );
+  if (!authResponse.ok) {
+    throw new Error(`Quick Connect sign-in failed (${authResponse.status}).`);
+  }
+  const auth = await authResponse.json() as {
+    AccessToken?: string;
+    ServerId?: string;
+    User?: { Id?: string; Name?: string };
+  };
+  if (!auth.AccessToken || !auth.User?.Id) {
+    throw new Error('Jellyfin returned an incomplete Quick Connect session.');
+  }
+  const session: StoredSession = {
+    version: 1,
+    deviceId: pending.deviceId,
+    baseUrl: pending.baseUrl,
+    accessToken: auth.AccessToken,
+    userId: auth.User.Id,
+    serverId: auth.ServerId ?? pending.system.Id ?? '',
+    serverName: pending.system.ServerName ?? 'Jellyfin',
+    serverVersion: pending.system.Version ?? 'unknown',
+    userName: auth.User.Name ?? 'Jellyfin user'
+  };
+  await saveSession(session);
+  pendingQuickConnect.delete(secret);
+  return { status: 'connected', session: publicSession(session) };
+}
+
 function middleware() {
   return async (
     request: IncomingMessage,
@@ -836,6 +1048,21 @@ function middleware() {
       return;
     }
     try {
+      if (url.pathname === '/api/vidaa/quick-connect') {
+        if (!isLoopback(request)) {
+          text(response, 403, 'Quick Connect setup is only available from this PC.');
+          return;
+        }
+        if (request.method === 'POST') {
+          json(response, 200, await startQuickConnect(await bodyJson(request)));
+          return;
+        }
+        if (request.method === 'GET') {
+          const secret = url.searchParams.get('secret') ?? '';
+          json(response, 200, await pollQuickConnect(secret));
+          return;
+        }
+      }
       if (url.pathname === '/api/vidaa/session') {
         if (request.method === 'GET') {
           json(response, 200, publicSession(await loadSession()));
@@ -864,6 +1091,14 @@ function middleware() {
       }
       if (url.pathname === '/api/vidaa/home' && request.method === 'GET') {
         json(response, 200, await home(session));
+        return;
+      }
+      if (url.pathname === '/api/vidaa/items' && request.method === 'GET') {
+        json(response, 200, await browseItems(
+          session,
+          url.searchParams.get('parentId'),
+          url.searchParams.get('searchTerm')?.trim().slice(0, 200) ?? ''
+        ));
         return;
       }
       const optionsMatch = /^\/api\/vidaa\/items\/([^/]+)\/playback-options$/.exec(url.pathname);

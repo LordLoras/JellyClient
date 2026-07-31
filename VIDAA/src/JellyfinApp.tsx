@@ -13,11 +13,13 @@ import {
   Rewind,
   RotateCcw,
   Save,
+  Search,
   Server,
   Settings2,
   Square,
   Subtitles,
-  Wifi
+  Wifi,
+  X
 } from 'lucide-react';
 import {
   useEffect,
@@ -33,6 +35,7 @@ import type {
   VidaaBridgeError,
   VidaaHomePayload,
   VidaaJellyfinSession,
+  VidaaItemsPage,
   VidaaMediaItem,
   VidaaPlaybackOptions,
   VidaaPlaybackPlan,
@@ -86,6 +89,22 @@ function signalBadges(item: VidaaMediaItem) {
   ].filter((value): value is string => Boolean(value));
 }
 
+function withPlaybackSource(
+  options: VidaaPlaybackOptions,
+  sourceId: string
+): VidaaPlaybackOptions {
+  const source = options.sources.find((candidate) => candidate.id === sourceId);
+  return source ? {
+    ...options,
+    mediaSourceId: source.id,
+    container: source.container,
+    audioTracks: source.audioTracks,
+    subtitleTracks: source.subtitleTracks,
+    defaultAudioIndex: source.defaultAudioIndex,
+    defaultSubtitleIndex: source.defaultSubtitleIndex
+  } : options;
+}
+
 function MediaTile({ item, onSelect }: { item: VidaaMediaItem; onSelect(item: VidaaMediaItem): void }) {
   const label = item.seriesName
     ? `${item.seriesName} · ${item.indexLabel ?? item.name}`
@@ -103,7 +122,7 @@ function MediaTile({ item, onSelect }: { item: VidaaMediaItem; onSelect(item: Vi
       <small>{[item.productionYear, ...signalBadges(item).slice(0, 2)].filter(Boolean).join(' · ')}</small>
     </>
   );
-  return item.canPlay ? (
+  return item.canPlay || item.isFolder ? (
     <button className="vida-tile" data-focusable onClick={() => onSelect(item)} type="button">{content}</button>
   ) : (
     <article className="vida-tile vida-tile--static">{content}</article>
@@ -137,7 +156,7 @@ function TrackRow({ track, selected, disabled, onSelect }: {
     <button className={`track-choice${selected ? ' track-choice--selected' : ''}`} data-focusable disabled={disabled} onClick={onSelect} type="button">
       <span>{selected ? <Check /> : null}</span>
       <div><strong>{track.title}</strong><small>{[track.language?.toUpperCase(), track.codec?.toUpperCase(), track.channelLayout].filter(Boolean).join(' · ')}</small></div>
-      {disabled && <em>PGS overlay later</em>}
+      {disabled && <em>Bitmap track unavailable</em>}
     </button>
   );
 }
@@ -284,6 +303,30 @@ function SettingsSheet({ settings, onClose, onSave }: {
             <h3><Settings2 /> Remote controls</h3>
             <ChoiceGroup
               choices={[
+                { value: 0.75, label: '0.75×' },
+                { value: 1, label: '1×' },
+                { value: 1.25, label: '1.25×' },
+                { value: 1.5, label: '1.5×' },
+                { value: 2, label: '2×' }
+              ]}
+              label="Playback speed"
+              onChange={(value) => update('playbackSpeed', value)}
+              value={draft.playbackSpeed}
+            />
+            <ChoiceGroup
+              choices={[
+                { value: -2, label: '−2 s' },
+                { value: -1, label: '−1 s' },
+                { value: 0, label: '0 s' },
+                { value: 1, label: '+1 s' },
+                { value: 2, label: '+2 s' }
+              ]}
+              label="Subtitle timing"
+              onChange={(value) => update('subtitleDelaySeconds', value)}
+              value={draft.subtitleDelaySeconds}
+            />
+            <ChoiceGroup
+              choices={[
                 { value: 10, label: '10 seconds' },
                 { value: 30, label: '30 seconds' },
                 { value: 60, label: '60 seconds' }
@@ -302,6 +345,35 @@ function SettingsSheet({ settings, onClose, onSave }: {
               label="Hide controls"
               onChange={(value) => update('controlTimeoutSeconds', value)}
               value={draft.controlTimeoutSeconds}
+            />
+            <button
+              className={`settings-toggle${draft.autoSkipIntro ? ' is-selected' : ''}`}
+              data-focusable
+              onClick={() => update('autoSkipIntro', !draft.autoSkipIntro)}
+              type="button"
+            ><span>{draft.autoSkipIntro ? <Check /> : null}</span><div><strong>Skip intros automatically</strong><small>Uses segments reported by Jellyfin.</small></div></button>
+            <button
+              className={`settings-toggle${draft.autoSkipOutro ? ' is-selected' : ''}`}
+              data-focusable
+              onClick={() => update('autoSkipOutro', !draft.autoSkipOutro)}
+              type="button"
+            ><span>{draft.autoSkipOutro ? <Check /> : null}</span><div><strong>Skip endings automatically</strong><small>The N shortcut remains available.</small></div></button>
+            <button
+              className={`settings-toggle${draft.autoPlayNext ? ' is-selected' : ''}`}
+              data-focusable
+              onClick={() => update('autoPlayNext', !draft.autoPlayNext)}
+              type="button"
+            ><span>{draft.autoPlayNext ? <Check /> : null}</span><div><strong>Play next episode</strong><small>Continue after the countdown.</small></div></button>
+            <ChoiceGroup
+              choices={[
+                { value: 5, label: '5 seconds' },
+                { value: 10, label: '10 seconds' },
+                { value: 15, label: '15 seconds' },
+                { value: 20, label: '20 seconds' }
+              ]}
+              label="Next episode countdown"
+              onChange={(value) => update('nextEpisodeCountdownSeconds', value)}
+              value={draft.nextEpisodeCountdownSeconds}
             />
             <div className="subtitle-preview">
               <p>PREVIEW</p>
@@ -329,8 +401,18 @@ function PlaybackSheet({ options, settings, busy, error, onClose, onStart }: {
   onStart(request: VidaaPlaybackRequest): void;
 }) {
   const preferred = preferredPlaybackTracks(options, settings);
+  const [sourceId, setSourceId] = useState(options.mediaSourceId);
   const [audioIndex, setAudioIndex] = useState<number | null>(preferred.audioStreamIndex);
   const [subtitleIndex, setSubtitleIndex] = useState<number | null>(preferred.subtitleStreamIndex);
+  const [maxBitrate, setMaxBitrate] = useState<number | null>(null);
+  const selectedOptions = withPlaybackSource(options, sourceId);
+  const selectSource = (id: string) => {
+    const next = withPlaybackSource(options, id);
+    const tracks = preferredPlaybackTracks(next, settings);
+    setSourceId(id);
+    setAudioIndex(tracks.audioStreamIndex);
+    setSubtitleIndex(tracks.subtitleStreamIndex);
+  };
   return (
     <div className="track-sheet" role="dialog" aria-modal="true">
       <button aria-label="Dismiss playback options" className="track-sheet__scrim" onClick={onClose} type="button" />
@@ -343,25 +425,37 @@ function PlaybackSheet({ options, settings, busy, error, onClose, onStart }: {
         <div className="track-sheet__columns">
           <div>
             <h3><Languages /> Audio track</h3>
-            {options.audioTracks.map((track) => <TrackRow key={track.index} onSelect={() => setAudioIndex(track.index)} selected={audioIndex === track.index} track={track} />)}
+            {selectedOptions.audioTracks.map((track) => <TrackRow key={track.index} onSelect={() => setAudioIndex(track.index)} selected={audioIndex === track.index} track={track} />)}
           </div>
           <div>
             <h3><Subtitles /> Subtitles</h3>
             <button className={`track-choice${subtitleIndex === null ? ' track-choice--selected' : ''}`} data-focusable onClick={() => setSubtitleIndex(null)} type="button"><span>{subtitleIndex === null ? <Check /> : null}</span><div><strong>Off</strong><small>No subtitle overlay</small></div></button>
-            {options.subtitleTracks.map((track) => <TrackRow disabled={!track.isText} key={track.index} onSelect={() => setSubtitleIndex(track.index)} selected={subtitleIndex === track.index} track={track} />)}
+            {selectedOptions.subtitleTracks.map((track) => <TrackRow disabled={!track.isText} key={track.index} onSelect={() => setSubtitleIndex(track.index)} selected={subtitleIndex === track.index} track={track} />)}
           </div>
+        </div>
+        <div className="playback-quality">
+          <label><span>Version</span><select data-focusable value={sourceId} onChange={(event) => selectSource(event.target.value)}>{options.sources.map((source) => <option key={source.id} value={source.id}>{[source.name, source.resolution, source.videoRange, source.videoCodec?.toUpperCase()].filter(Boolean).join(' · ')}</option>)}</select></label>
+          <span>Streaming quality</span>
+          <select data-focusable value={maxBitrate ?? 'original'} onChange={(event) => setMaxBitrate(event.target.value === 'original' ? null : Number(event.target.value))}>
+            <option value="original">Original</option>
+            <option value={80_000_000}>Up to 80 Mbps</option>
+            <option value={40_000_000}>Up to 40 Mbps</option>
+            <option value={20_000_000}>Up to 20 Mbps</option>
+            <option value={10_000_000}>Up to 10 Mbps</option>
+          </select>
+          <small>Lower limits may require conversion. HDR video conversion is blocked by the bridge.</small>
         </div>
         {error && <div className="player-error"><CircleAlert /> {error}</div>}
         <footer>
           <p>Text, ASS, and SSA tracks are rendered by JellyClient. Bitmap PGS tracks are listed but cannot be selected yet.</p>
-          <button className="signal-button signal-button--primary" data-focusable disabled={busy} onClick={() => onStart({ mediaSourceId: options.mediaSourceId, startPositionTicks: options.item.playbackPositionTicks, audioStreamIndex: audioIndex, subtitleStreamIndex: subtitleIndex })} type="button"><Play /> {busy ? 'Negotiating…' : options.item.playbackPositionTicks > 0 ? 'Resume' : 'Play'}</button>
+          <button className="signal-button signal-button--primary" data-focusable disabled={busy} onClick={() => onStart({ mediaSourceId: sourceId, startPositionTicks: options.item.playbackPositionTicks, audioStreamIndex: audioIndex, subtitleStreamIndex: subtitleIndex, maxStreamingBitrate: maxBitrate })} type="button"><Play /> {busy ? 'Negotiating…' : options.item.playbackPositionTicks > 0 ? 'Resume' : 'Play'}</button>
         </footer>
       </section>
     </div>
   );
 }
 
-function PlayerOptionsSheet({ options, audioIndex, subtitleIndex, busy, error, onAudio, onSubtitle, onSettings, onClose }: {
+function PlayerOptionsSheet({ options, audioIndex, subtitleIndex, busy, error, onAudio, onSubtitle, onChapter, onSettings, onClose }: {
   options: VidaaPlaybackOptions;
   audioIndex: number | null;
   subtitleIndex: number | null;
@@ -369,6 +463,7 @@ function PlayerOptionsSheet({ options, audioIndex, subtitleIndex, busy, error, o
   error: string | null;
   onAudio(index: number): void;
   onSubtitle(index: number | null): void;
+  onChapter(index: number): void;
   onSettings(): void;
   onClose(): void;
 }) {
@@ -415,6 +510,16 @@ function PlayerOptionsSheet({ options, audioIndex, subtitleIndex, busy, error, o
             ))}
           </div>
         </div>
+        {options.chapters.length > 0 && (
+          <div className="player-chapters">
+            <h3><Clock3 /> Chapters</h3>
+            <div>{options.chapters.map((chapter, index) => (
+              <button data-focusable key={`${chapter.startTicks}-${chapter.name}`} onClick={() => onChapter(index)} type="button">
+                <strong>{chapter.name}</strong><small>{duration(chapter.startTicks)}</small>
+              </button>
+            ))}</div>
+          </div>
+        )}
         {error && <div className="player-error"><CircleAlert /> {error}</div>}
         <footer>
           <p>Subtitle changes are immediate. Changing embedded audio asks Jellyfin for a new stream and resumes at the current position.</p>
@@ -428,12 +533,13 @@ function PlayerOptionsSheet({ options, audioIndex, subtitleIndex, busy, error, o
   );
 }
 
-function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange, onExit }: {
+function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange, onPlayNext, onExit }: {
   plan: VidaaPlaybackPlan;
   options: VidaaPlaybackOptions;
   settings: VidaaPlayerSettings;
   onPlanChange(plan: VidaaPlaybackPlan): void;
   onSettingsChange(settings: VidaaPlayerSettings): void;
+  onPlayNext(item: VidaaMediaItem): void;
   onExit(): void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -457,6 +563,7 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
   const [dismissedSegmentIds, setDismissedSegmentIds] = useState<Set<string>>(
     () => new Set()
   );
+  const [postPlayCanceled, setPostPlayCanceled] = useState(false);
 
   planRef.current = plan;
 
@@ -533,11 +640,18 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
   }
 
   useEffect(() => {
+    startedRef.current = false;
+    stoppedRef.current = false;
     setAudioIndex(plan.audioStreamIndex);
     setSubtitleIndex(plan.subtitleStreamIndex);
     setSubtitleUrl(plan.subtitleUrl);
     setError(null);
+    setPostPlayCanceled(false);
   }, [plan]);
+
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.playbackRate = settings.playbackSpeed;
+  }, [settings.playbackSpeed, plan.mediaUrl]);
 
   useEffect(() => {
     setDismissedSegmentIds(new Set());
@@ -577,8 +691,13 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
         }
         return;
       }
-      if (event.key.toLowerCase() === 'n' && activeSkipSegmentRef.current) {
-        skipCurrentSegment();
+      if (event.key.toLowerCase() === 'n') {
+        if (activeSkipSegmentRef.current) skipCurrentSegment();
+        else if (planRef.current.nextItem && !postPlayCanceled) {
+          onPlayNext(planRef.current.nextItem);
+        }
+      } else if ((event.key === 'Escape' || event.keyCode === 413) && postPlayRemaining !== null) {
+        setPostPlayCanceled(true);
       } else if (event.key === 'Escape' || event.keyCode === 413) stop();
       else if (event.key === 'Enter' || event.key === ' ' || event.keyCode === 415 || event.keyCode === 19) {
         if (video.paused) void video.play(); else video.pause();
@@ -597,7 +716,7 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
     return () => {
       window.removeEventListener('keydown', onKey);
     };
-  }, [menu, settings.seekSeconds, settings.controlTimeoutSeconds]);
+  }, [menu, settings.seekSeconds, settings.controlTimeoutSeconds, postPlayCanceled]);
 
   useEffect(() => {
     let cancelled = false;
@@ -678,13 +797,27 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
     const video = videoRef.current;
     if (video) video.currentTime = Math.max(0, Math.min(video.duration || Infinity, video.currentTime + amount));
   };
-  const activeSubtitle = subtitleAtTime(subtitleCues, position);
+  const activeSubtitle = subtitleAtTime(
+    subtitleCues,
+    Math.max(0, position - settings.subtitleDelaySeconds)
+  );
   const activeSegment = activeSkipSegment(
     plan.segments,
     position,
     dismissedSegmentIds
   );
   activeSkipSegmentRef.current = activeSegment;
+  const postPlayRemaining = plan.nextItem && !postPlayCanceled && total > 0 &&
+    total - position <= settings.nextEpisodeCountdownSeconds
+      ? Math.max(0, Math.ceil(total - position))
+      : null;
+  useEffect(() => {
+    if (!activeSegment) return;
+    const automatic = activeSegment.type === 'Intro'
+      ? settings.autoSkipIntro
+      : settings.autoSkipOutro;
+    if (automatic) skipCurrentSegment();
+  }, [activeSegment?.id, settings.autoSkipIntro, settings.autoSkipOutro]);
   const playerClasses = [
     'native-player',
     controlsVisible || menu ? '' : 'native-player--controls-hidden',
@@ -703,7 +836,12 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
       <video
         autoPlay
         onDurationChange={(event) => setTotal(event.currentTarget.duration || 0)}
-        onEnded={stop}
+        onEnded={() => {
+          if (plan.nextItem && settings.autoPlayNext && !postPlayCanceled) {
+            if (!stoppedRef.current) { stoppedRef.current = true; report('stop'); }
+            onPlayNext(plan.nextItem);
+          } else stop();
+        }}
         onError={() => {
           clearControlsTimer();
           setControlsVisible(true);
@@ -711,6 +849,7 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
         }}
         onLoadedMetadata={(event) => {
           if (plan.startPositionSeconds > 1) event.currentTarget.currentTime = plan.startPositionSeconds;
+          event.currentTarget.playbackRate = settings.playbackSpeed;
         }}
         onPause={() => {
           clearControlsTimer();
@@ -748,6 +887,15 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
           <kbd>N</kbd>
         </button>
       )}
+      {plan.nextItem && postPlayRemaining !== null && !menu && (
+        <div className="native-player__postplay">
+          <p>UP NEXT · {postPlayRemaining}s</p>
+          <h2>{plan.nextItem.seriesName ?? plan.nextItem.name}</h2>
+          {plan.nextItem.seriesName && <span>{plan.nextItem.indexLabel} · {plan.nextItem.name}</span>}
+          <div><button data-focusable onClick={() => onPlayNext(plan.nextItem!)} type="button"><Play /> Play now</button><button data-focusable onClick={() => setPostPlayCanceled(true)} type="button">Cancel</button></div>
+          <small>Press N to play now</small>
+        </div>
+      )}
       <div className="native-player__shade" />
       <header><div><p>{plan.item.seriesName ?? plan.item.type}</p><h1>{plan.item.name}</h1></div><button className="signal-button signal-button--quiet" data-focusable onClick={stop} type="button"><Square /> Stop</button></header>
       <aside>
@@ -775,6 +923,13 @@ function NativePlayer({ plan, options, settings, onPlanChange, onSettingsChange,
           busy={trackBusy}
           error={error}
           onAudio={(index) => void changeAudio(index)}
+          onChapter={(index) => {
+            const chapter = options.chapters[index];
+            if (chapter && videoRef.current) {
+              videoRef.current.currentTime = chapter.startTicks / TICKS_PER_SECOND;
+              setMenu(null);
+            }
+          }}
           onClose={() => setMenu(null)}
           onSettings={() => setMenu('settings')}
           onSubtitle={changeSubtitle}
@@ -805,6 +960,19 @@ export function JellyfinApp() {
   const [plan, setPlan] = useState<VidaaPlaybackPlan | null>(null);
   const [negotiating, setNegotiating] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [browse, setBrowse] = useState<{
+    title: string;
+    page: VidaaItemsPage;
+    parentId: string | null;
+    searchTerm: string;
+  } | null>(null);
+  const [browseHistory, setBrowseHistory] = useState<Array<{
+    title: string;
+    parentId: string | null;
+    searchTerm: string;
+  }>>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchText, setSearchText] = useState('');
   const [settings, setSettings] = useState<VidaaPlayerSettings>(
     loadPlayerSettings
   );
@@ -829,6 +997,12 @@ export function JellyfinApp() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (plan) return;
+      if ((event.key === 'Escape' || event.keyCode === 413) && (searchOpen || browse)) {
+        if (searchOpen) setSearchOpen(false);
+        else closeBrowse();
+        event.preventDefault();
+        return;
+      }
       const direction = {
         ArrowUp: 'up',
         ArrowDown: 'down',
@@ -842,17 +1016,72 @@ export function JellyfinApp() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [plan]);
+  }, [plan, browse, browseHistory, searchOpen]);
 
   const hero = useMemo(() => home?.resume[0] ?? home?.nextUp[0] ?? home?.latest.find((item) => item.canPlay) ?? null, [home]);
 
   async function choose(item: VidaaMediaItem) {
     setError(null);
+    if (item.isFolder) {
+      await openBrowse(item.id, item.name);
+      return;
+    }
     try {
       setOptions(await apiJson<VidaaPlaybackOptions>(`/api/vidaa/items/${encodeURIComponent(item.id)}/playback-options`));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
+  }
+
+  async function openBrowse(
+    parentId: string | null,
+    title: string,
+    searchTerm = '',
+    rememberCurrent = true
+  ) {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams();
+      if (parentId) params.set('parentId', parentId);
+      if (searchTerm) params.set('searchTerm', searchTerm);
+      if (rememberCurrent && browse) {
+        setBrowseHistory((current) => [
+          ...current,
+          {
+            title: browse.title,
+            parentId: browse.parentId,
+            searchTerm: browse.searchTerm
+          }
+        ]);
+      }
+      setBrowse({
+        title,
+        parentId,
+        searchTerm,
+        page: await apiJson<VidaaItemsPage>(`/api/vidaa/items?${params.toString()}`)
+      });
+      setSearchOpen(false);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function closeBrowse() {
+    const previous = browseHistory[browseHistory.length - 1];
+    if (!previous) {
+      setBrowse(null);
+      return;
+    }
+    setBrowseHistory((current) => current.slice(0, -1));
+    void openBrowse(
+      previous.parentId,
+      previous.title,
+      previous.searchTerm,
+      false
+    );
   }
 
   async function start(request: VidaaPlaybackRequest) {
@@ -865,6 +1094,38 @@ export function JellyfinApp() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(request)
       });
+      setOptions(withPlaybackSource(options, request.mediaSourceId));
+      setPlan(nextPlan);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setNegotiating(false);
+    }
+  }
+
+  async function playNext(item: VidaaMediaItem) {
+    setNegotiating(true);
+    setError(null);
+    try {
+      const nextOptions = await apiJson<VidaaPlaybackOptions>(
+        `/api/vidaa/items/${encodeURIComponent(item.id)}/playback-options`
+      );
+      const tracks = preferredPlaybackTracks(nextOptions, settings);
+      const nextPlan = await apiJson<VidaaPlaybackPlan>(
+        `/api/vidaa/items/${encodeURIComponent(item.id)}/play`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mediaSourceId: nextOptions.mediaSourceId,
+            startPositionTicks: 0,
+            audioStreamIndex: tracks.audioStreamIndex,
+            subtitleStreamIndex: tracks.subtitleStreamIndex,
+            maxStreamingBitrate: null
+          } satisfies VidaaPlaybackRequest)
+        }
+      );
+      setOptions(nextOptions);
       setPlan(nextPlan);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -888,6 +1149,7 @@ export function JellyfinApp() {
           void refresh();
         }}
         onPlanChange={setPlan}
+        onPlayNext={(item) => void playNext(item)}
         onSettingsChange={updateSettings}
         options={options}
         plan={plan}
@@ -902,10 +1164,24 @@ export function JellyfinApp() {
         <nav>
           <span><Wifi /> {session?.connected ? session.serverName : 'OFFLINE'}</span>
           <button data-focusable onClick={() => void refresh()} type="button"><RefreshCw /> Refresh</button>
+          <button data-focusable onClick={() => setSearchOpen(true)} type="button"><Search /> Search</button>
           <a data-focusable href="/probe"><Gauge /> Signal probe</a>
           <button data-focusable onClick={() => setSettingsOpen(true)} type="button"><Settings2 /> Settings</button>
         </nav>
       </header>
+
+      {searchOpen && (
+        <form className="vidaa-search" onSubmit={(event) => {
+          event.preventDefault();
+          const query = searchText.trim();
+          if (query) void openBrowse(null, `Results for “${query}”`, query);
+        }}>
+          <Search />
+          <input autoFocus data-focusable onChange={(event) => setSearchText(event.target.value)} placeholder="Search your Jellyfin library" value={searchText} />
+          <button className="signal-button signal-button--primary" data-focusable type="submit">Search</button>
+          <button aria-label="Close search" className="round-button" data-focusable onClick={() => setSearchOpen(false)} type="button"><X /></button>
+        </form>
+      )}
 
       {loading && <section className="vidaa-empty"><div className="loading-orbit" /><p>Opening your Jellyfin library…</p></section>}
       {!loading && !session?.connected && (
@@ -918,7 +1194,15 @@ export function JellyfinApp() {
         </section>
       )}
       {!loading && error && <div className="vidaa-global-error"><CircleAlert /> <span>{error}</span></div>}
-      {!loading && home && hero && (
+      {!loading && browse && (
+        <section className="vidaa-browser">
+          <header><button className="round-button" data-focusable onClick={closeBrowse} type="button"><ArrowLeft /></button><div><p>BROWSE</p><h1>{browse.title}</h1></div><span>{browse.page.totalRecordCount} items</span></header>
+          {browse.page.items.length > 0
+            ? <div className="vidaa-media-grid">{browse.page.items.map((item) => <MediaTile item={item} key={item.id} onSelect={(selected) => void choose(selected)} />)}</div>
+            : <div className="vidaa-empty"><Search /><h2>No items found</h2></div>}
+        </section>
+      )}
+      {!loading && home && hero && !browse && (
         <>
           <section className="vidaa-hero" style={hero.backdropUrl ? { backgroundImage: `linear-gradient(90deg, rgba(7,10,9,.98) 0%, rgba(7,10,9,.78) 40%, rgba(7,10,9,.2) 78%), url("${bridgeUrl(hero.backdropUrl)}")` } : undefined}>
             <div>
@@ -934,7 +1218,7 @@ export function JellyfinApp() {
             <MediaRail eyebrow="PICK UP WHERE YOU LEFT OFF" items={home.resume} onSelect={(item) => void choose(item)} title="Continue watching" />
             <MediaRail eyebrow="NEW EPISODES WAITING" items={home.nextUp} onSelect={(item) => void choose(item)} title="Up next" />
             <MediaRail eyebrow="FRESH FROM YOUR SERVER" items={home.latest} onSelect={(item) => void choose(item)} title="Recently added" />
-            <section className="library-strip"><p>YOUR LIBRARIES</p><div>{home.libraries.map((library) => <span key={library.id}>{library.name}</span>)}</div></section>
+            <section className="library-strip"><p>YOUR LIBRARIES</p><div>{home.libraries.map((library) => <button data-focusable key={library.id} onClick={() => { setBrowseHistory([]); void openBrowse(library.id, library.name); }} type="button">{library.name}</button>)}</div></section>
           </div>
         </>
       )}

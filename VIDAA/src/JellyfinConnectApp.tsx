@@ -5,6 +5,7 @@ import {
   LogOut,
   Server,
   ShieldCheck,
+  Smartphone,
   Tv,
   UserRound
 } from 'lucide-react';
@@ -18,6 +19,18 @@ import type {
   VidaaBridgeError,
   VidaaJellyfinSession
 } from './jellyfin-types.js';
+
+interface QuickConnectRequest {
+  status: 'pending';
+  secret: string;
+  code: string;
+  serverName: string;
+}
+
+interface QuickConnectPoll {
+  status: 'pending' | 'connected' | 'expired';
+  session: VidaaJellyfinSession | null;
+}
 
 async function responseJson<T>(response: Response): Promise<T> {
   const value = await response.json() as T | VidaaBridgeError;
@@ -36,6 +49,7 @@ export function JellyfinConnectApp() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('Loading connection state…');
   const [tone, setTone] = useState<'neutral' | 'good' | 'error'>('neutral');
+  const [quickConnect, setQuickConnect] = useState<QuickConnectRequest | null>(null);
 
   useEffect(() => {
     void fetch(bridgeUrl('/api/vidaa/session'))
@@ -53,6 +67,40 @@ export function JellyfinConnectApp() {
         setTone('error');
       });
   }, []);
+
+  useEffect(() => {
+    if (!quickConnect) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const response = await fetch(bridgeUrl(
+          `/api/vidaa/quick-connect?secret=${encodeURIComponent(quickConnect.secret)}`
+        ));
+        const value = await responseJson<QuickConnectPoll>(response);
+        if (!active || value.status === 'pending') return;
+        setQuickConnect(null);
+        if (value.status === 'connected' && value.session) {
+          setSession(value.session);
+          setTone('good');
+          setMessage(`Connected to ${value.session.serverName} as ${value.session.userName}. The TV home is ready.`);
+        } else {
+          setTone('error');
+          setMessage('The Quick Connect code expired. Request another code.');
+        }
+      } catch (error) {
+        if (!active) return;
+        setQuickConnect(null);
+        setTone('error');
+        setMessage(error instanceof Error ? error.message : String(error));
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 1_500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [quickConnect]);
 
   async function connect(event: FormEvent) {
     event.preventDefault();
@@ -88,6 +136,26 @@ export function JellyfinConnectApp() {
       setSession(value);
       setTone('neutral');
       setMessage('VIDAA is disconnected from Jellyfin.');
+    } catch (error) {
+      setTone('error');
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function beginQuickConnect() {
+    setBusy(true);
+    setTone('neutral');
+    setMessage('Requesting a Quick Connect code…');
+    try {
+      const response = await fetch(bridgeUrl('/api/vidaa/quick-connect'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ baseUrl })
+      });
+      setQuickConnect(await responseJson<QuickConnectRequest>(response));
+      setMessage('Approve the displayed code in a signed-in Jellyfin app.');
     } catch (error) {
       setTone('error');
       setMessage(error instanceof Error ? error.message : String(error));
@@ -159,6 +227,9 @@ export function JellyfinConnectApp() {
           <button className="signal-button signal-button--primary connect-submit" disabled={busy} type="submit">
             {busy ? 'Working…' : session?.connected ? 'Reconnect' : 'Connect'}
           </button>
+          <button className="signal-button signal-button--quiet connect-submit" disabled={busy} onClick={() => void beginQuickConnect()} type="button">
+            <Smartphone /> Use Quick Connect
+          </button>
           {session?.connected && (
             <button className="signal-button signal-button--danger" disabled={busy} onClick={() => void disconnect()} type="button">
               <LogOut /> Disconnect this TV client
@@ -166,6 +237,19 @@ export function JellyfinConnectApp() {
           )}
         </form>
       </section>
+      {quickConnect && (
+        <div className="connect-quick" role="dialog" aria-modal="true">
+          <section>
+            <button aria-label="Cancel Quick Connect" className="round-button" onClick={() => setQuickConnect(null)} type="button"><ArrowLeft /></button>
+            <Smartphone />
+            <p>QUICK CONNECT</p>
+            <h2>Approve this code</h2>
+            <strong>{quickConnect.code}</strong>
+            <span>Open Settings → Quick Connect in a signed-in Jellyfin app and enter this code for {quickConnect.serverName}.</span>
+            <small>Waiting for approval…</small>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
