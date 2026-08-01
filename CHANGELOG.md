@@ -19,9 +19,12 @@
   drift after playback starts.
 - Route Jellyfin remote play, pause, stop, and seek commands through the local
   player or the active SyncPlay room as appropriate.
-- Expand automated coverage to 102 unit tests and 10 desktop tests, including
+- Keep the list picker above item details so playlists and collections remain
+  clickable, and dismiss the player dock after playback is stopped.
+- Expand automated coverage to 102 unit tests and 15 desktop tests, including
   deterministic randomized SyncPlay command bursts, transient server failures,
-  remote-control routing, Continue Watching undo, and offline startup.
+  remote-control routing, Continue Watching undo, offline startup, list
+  management, and a real MPV playback-control session.
 
 ## 1.1.0 — 2026-08-01
 

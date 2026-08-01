@@ -303,12 +303,21 @@ SyncPlay also runs deterministic randomized rapid-command bursts and verifies
 that only the newest command is applied, the room remains joined, and the
 control queue still works after a transient request failure.
 
-The Electron test suite covers sign-in and saved-session restoration, offline
-startup, default subtitle preferences, empty-folder filtering, configurable
-home data, library-management navigation, card actions, Continue Watching
-removal and Undo, and first-run visual capture. These tests complement rather
-than replace the physical HDR, audio, subtitle, multi-client, and soak checks
-listed above.
+The Electron test suite runs 15 click-driven workflows against both the source
+app and the packaged Windows executable. It covers sign-in and encrypted
+session restoration, fast offline startup, subtitle defaults, empty-folder
+filtering, configurable home rows, library navigation and filtering, keyboard
+and mouse back navigation, card actions, Continue Watching removal and Undo,
+favorites and watched state, item metadata and playback options, genre/person/
+recommendation browsing, playlist and collection creation and editing, and
+first-run visual capture. A generated multi-audio/multi-subtitle MKV is served
+over authenticated HTTP ranges and played through real MPV while the suite
+clicks pause, seek, speed, delays, track selection, mute, volume, diagnostics,
+chapter navigation, and stop.
+
+These checks complement rather than replace physical confirmation of HDR output,
+ASS/PGS rendering quality, audio endpoint behavior, multi-client SyncPlay, and
+long viewing or recovery soaks.
 
 ## 13. Gate definitions
 

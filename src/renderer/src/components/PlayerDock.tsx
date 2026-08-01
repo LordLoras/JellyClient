@@ -36,7 +36,11 @@ export function PlayerDock({ playback, syncPlay, onAction }: Props) {
   const [showTracks, setShowTracks] = useState<'audio' | 'subtitle' | 'playback' | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [scrub, setScrub] = useState<{ percent: number; seconds: number } | null>(null);
-  if (!playback.item || playback.status === 'idle') return null;
+  if (
+    !playback.item ||
+    playback.status === 'idle' ||
+    playback.status === 'stopped'
+  ) return null;
 
   const progress =
     playback.durationSeconds > 0
