@@ -55,7 +55,7 @@ test.afterAll(async () => {
 test('shows the secure Jellyfin connection profile', async () => {
   await expect(page).toHaveTitle('JellyClient');
   await expect(
-    page.getByRole('heading', { name: 'Meet your Jellyfin server' })
+    page.getByRole('heading', { name: 'Connect to Jellyfin' })
   ).toBeVisible();
   await expect(page.getByLabel('Server IP or hostname')).toBeVisible();
   await expect(page.getByLabel('Port')).toHaveValue('8096');
@@ -64,9 +64,13 @@ test('shows the secure Jellyfin connection profile', async () => {
     'type',
     'password'
   );
-  await expect(page.getByText('Your password is used once')).toBeVisible();
-  const brandBounds = await page.locator('.login__story > .brand').boundingBox();
-  expect(brandBounds?.x).toBeGreaterThanOrEqual(40);
+  await expect(page.getByText('Your password is used to sign in')).toBeVisible();
+  await expect(page.getByText('The image comes first.')).toHaveCount(0);
+  const brandBounds = await page.locator('.login__center > .brand').boundingBox();
+  const windowCenter = await page.evaluate(() => window.innerWidth / 2);
+  expect(Math.abs(
+    (brandBounds?.x ?? 0) + (brandBounds?.width ?? 0) / 2 - windowCenter
+  )).toBeLessThan(4);
 });
 
 test('reveals advanced base-path configuration without exposing the password', async () => {
@@ -82,11 +86,12 @@ test('reveals advanced base-path configuration without exposing the password', a
     page.getByLabel('Password', { exact: true })
   ).toHaveAttribute('type', 'password');
   await page.getByLabel('Password', { exact: true }).fill('');
+  await page.getByRole('button', { name: 'Hide advanced address' }).click();
 });
 
 test('captures the first-run screen for visual review', async () => {
-  const brandBounds = await page.locator('.login__story > .brand').boundingBox();
-  expect(brandBounds?.x).toBeGreaterThanOrEqual(40);
+  const brandBounds = await page.locator('.login__center > .brand').boundingBox();
+  expect(brandBounds).not.toBeNull();
   await page.screenshot({
     path: resolve('artifacts', 'login-screen.png'),
     fullPage: true

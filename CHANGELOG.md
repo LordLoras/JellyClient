@@ -14,6 +14,10 @@
   controls, and refine card motion and spacing.
 - Increase the prominence of resolution, HDR, Dolby Vision, and audio badges
   with distinct visual treatments.
+- Show the connection form immediately while saved-session and MPV checks run
+  in the background, with bounded timeouts for an offline server.
+- Replace the split promotional sign-in screen with a larger centered
+  connection form and simplify decorative labels across both clients.
 
 ## 1.0.1 — 2026-07-31
 

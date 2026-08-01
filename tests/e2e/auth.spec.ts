@@ -23,6 +23,7 @@ let port = 0;
 let resumeRemoved = false;
 let nextEpisodeNumber = 2;
 let nextUpRequestUrl = '';
+let serverClosed = false;
 const configPath = resolve(
   'test-results',
   'mock-auth-profile',
@@ -213,13 +214,19 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await electronApp.close();
+  await closeServer();
+});
+
+async function closeServer(): Promise<void> {
+  if (serverClosed) return;
   await new Promise<void>((resolveClose, reject) => {
     server.close((error) => {
       if (error) reject(error);
       else resolveClose();
     });
   });
-});
+  serverClosed = true;
+}
 
 test('authenticates, persists a password-free profile, and opens the catalog', async () => {
   await page.getByLabel('Server IP or hostname').fill('127.0.0.1');
@@ -289,7 +296,7 @@ test('restores the encrypted session without asking for the password again', asy
   await expect(page.getByText('Fixture Server')).toBeVisible();
   await expect(
     page.getByRole('heading', {
-      name: 'Meet your Jellyfin server'
+      name: 'Connect to Jellyfin'
     })
   ).toHaveCount(0);
 });
@@ -377,6 +384,25 @@ test('can cancel or confirm removing saved progress and keeps Up Next useful', a
     upNextRail.getByText(/^S03 E03 · Freshly Added Episode/)
   ).toBeVisible();
   expect(resumeRemoved).toBe(true);
+});
+
+test('shows the connection form immediately when the saved server is offline', async () => {
+  await electronApp.close();
+  await closeServer();
+
+  const startedAt = Date.now();
+  electronApp = await launchApp();
+  page = await electronApp.firstWindow();
+
+  await expect(
+    page.getByRole('heading', { name: 'Connect to Jellyfin' })
+  ).toBeVisible();
+  expect(Date.now() - startedAt).toBeLessThan(2_500);
+  await expect(
+    page.getByRole('alert').filter({
+      hasText: /did not respond|refused the connection|could not be found/i
+    })
+  ).toBeVisible({ timeout: 4_000 });
 });
 
 function json(response: ServerResponse, body: unknown): void {

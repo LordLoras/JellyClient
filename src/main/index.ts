@@ -193,14 +193,17 @@ if (!hasSingleInstanceLock) {
       syncPlay
     });
 
-    await Promise.all([
-      jellyfin.initialize(),
-      mpv.probe()
-    ]);
     mainWindow = createWindow();
     mainWindow.on('closed', () => {
       mainWindow = null;
     });
+
+    // Session restoration and MPV discovery are background startup work. The
+    // connection form should be available even when a saved server is offline.
+    void Promise.all([
+      jellyfin.initialize(),
+      mpv.probe()
+    ]);
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {

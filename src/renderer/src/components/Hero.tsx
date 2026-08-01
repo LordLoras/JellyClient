@@ -30,7 +30,7 @@ export function Hero({
       <div className="hero__wash" />
       <div className="hero__copy">
         <p className="eyebrow">
-          {item.playbackPositionTicks > 0 ? 'CONTINUE SCREENING' : 'FEATURED TONIGHT'}
+          {item.playbackPositionTicks > 0 ? 'CONTINUE WATCHING' : 'FEATURED'}
         </p>
         <button className="hero__title" onClick={() => onOpen(item)}>
           <h1>{item.seriesName ?? item.name}</h1>
@@ -43,7 +43,7 @@ export function Hero({
           <MediaFormatBadges mediaFormat={item.mediaFormat} />
         </div>
         <p className="hero__overview">
-          {item.overview ?? 'Ready for playback through the native MPV window.'}
+          {item.overview ?? 'No description is available.'}
         </p>
         <div className="hero__actions">
           <button className="button button--primary" onClick={() => onPlay(item)}>

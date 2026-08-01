@@ -163,7 +163,7 @@ export function App() {
       <main className="boot-screen">
         <Brand />
         <span><LoaderCircle className="spin" /></span>
-        <p>Preparing the screening room…</p>
+        <p>Starting JellyClient…</p>
       </main>
     );
   }
@@ -551,12 +551,11 @@ function HomeView({
       ) : (
         <div className="empty-hero">
           <Clapperboard />
-          <h1>Your screening room is connected</h1>
+          <h1>No playable media found</h1>
           <p>Jellyfin has not returned any playable video yet.</p>
         </div>
       )}
       <MediaRail
-        kicker="PICK UP WHERE YOU LEFT OFF"
         title="Continue watching"
         items={home.resume}
         landscape
@@ -565,7 +564,6 @@ function HomeView({
         onDismiss={onDiscardProgress}
       />
       <MediaRail
-        kicker="YOUR NEXT EPISODE"
         title="Up next"
         items={home.nextUp}
         landscape
@@ -574,7 +572,6 @@ function HomeView({
         onPlay={onPlay}
       />
       <MediaRail
-        kicker="FRESH FROM YOUR SERVER"
         title="Recently added"
         items={home.latest}
         onOpen={onOpen}
@@ -583,7 +580,7 @@ function HomeView({
       {home.libraries.length > 0 && (
         <section className="library-band">
           <header className="rail__header">
-            <div><p className="eyebrow">COLLECTIONS</p><h2>Your libraries</h2></div>
+            <div><h2>Your libraries</h2></div>
           </header>
           <div className="library-band__grid">
             {home.libraries.map((library, index) => (

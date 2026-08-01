@@ -82,7 +82,7 @@ export function SyncPlayPanel({
     <aside className="side-panel">
       <header className="side-panel__header">
         <div>
-          <p className="eyebrow">ONE SESSION · ONE JOIN</p>
+          <p className="eyebrow">SYNCPLAY</p>
           <h2>SyncPlay room</h2>
         </div>
         <button className="icon-button" onClick={onClose} aria-label="Close SyncPlay">
@@ -93,7 +93,7 @@ export function SyncPlayPanel({
       {state.currentGroup ? (
         <section className="current-room">
           <div className="current-room__pulse"><Radio /></div>
-          <span>YOU ARE IN</span>
+          <span>CURRENT ROOM</span>
           <h3>{state.currentGroup.name}</h3>
           <p>{state.currentGroup.state} · {state.currentGroup.participants.length} connected</p>
           <div className="participant-list">

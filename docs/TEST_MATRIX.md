@@ -257,8 +257,8 @@ Use at least:
 | SP-24 | Thirty-minute stress loop | No deadlock, orphan process, runaway speed, or growing queue | B |
 | SP-25 | Two-hour real viewing soak | No unrecovered drift or player/session hang | Beta |
 
-Receiver/cast compatibility is a separate set because it is not needed for the
-primary standalone join-once experience:
+Receiver and cast compatibility are tested separately from the standalone
+SyncPlay flow:
 
 | ID | Test | Expected result | Gate |
 |---|---|---|---|

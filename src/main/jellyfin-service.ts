@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import axios from 'axios';
 import { Jellyfin } from '@jellyfin/sdk/lib/jellyfin.js';
 import type { Api } from '@jellyfin/sdk/lib/api.js';
 import { getItemsApi } from '@jellyfin/sdk/lib/utils/api/items-api.js';
@@ -75,6 +76,9 @@ const ITEM_FIELDS = [
 
 const DEFAULT_NEXT_UP_DAYS = 365;
 const QUICK_CONNECT_LIFETIME_MS = 5 * 60_000;
+const STARTUP_RESTORE_TIMEOUT_MS = 2_500;
+const CONNECTION_TIMEOUT_MS = 7_500;
+const API_TIMEOUT_MS = 12_000;
 
 interface PendingQuickConnect {
   input: QuickConnectStartInput;
@@ -105,6 +109,10 @@ export class JellyfinService extends EventEmitter {
     super();
     this.config = config;
     this.events = events;
+    this.stateValue = {
+      ...initialConnectionState,
+      profile: config.profile
+    };
   }
 
   get state(): ConnectionState {
@@ -166,8 +174,12 @@ export class JellyfinService extends EventEmitter {
     try {
       this.createApi(expectedUrl, storedSession.accessToken);
       const [systemResponse, userResponse] = await Promise.all([
-        getSystemApi(this.apiValue!).getPublicSystemInfo(),
-        getUserApi(this.apiValue!).getCurrentUser()
+        getSystemApi(this.apiValue!).getPublicSystemInfo({
+          timeout: STARTUP_RESTORE_TIMEOUT_MS
+        }),
+        getUserApi(this.apiValue!).getCurrentUser({
+          timeout: STARTUP_RESTORE_TIMEOUT_MS
+        })
       ]);
       const system = systemResponse.data;
       const user = userResponse.data;
@@ -227,13 +239,15 @@ export class JellyfinService extends EventEmitter {
 
     try {
       this.createApi(baseUrl);
-      const systemResponse = await getSystemApi(this.apiValue!).getPublicSystemInfo();
+      const systemResponse = await getSystemApi(
+        this.apiValue!
+      ).getPublicSystemInfo({ timeout: CONNECTION_TIMEOUT_MS });
       const authentication = await getUserApi(this.apiValue!).authenticateUserByName({
         authenticateUserByName: {
           Username: profile.username,
           Pw: password
         }
-      });
+      }, { timeout: CONNECTION_TIMEOUT_MS });
 
       const token = authentication.data.AccessToken;
       const user = authentication.data.User;
@@ -305,15 +319,19 @@ export class JellyfinService extends EventEmitter {
     const baseUrl = buildServerUrl(profile);
     this.createApi(baseUrl);
     const [systemResponse, enabledResponse] = await Promise.all([
-      getSystemApi(this.apiValue!).getPublicSystemInfo(),
-      getQuickConnectApi(this.apiValue!).getQuickConnectEnabled()
+      getSystemApi(this.apiValue!).getPublicSystemInfo({
+        timeout: CONNECTION_TIMEOUT_MS
+      }),
+      getQuickConnectApi(this.apiValue!).getQuickConnectEnabled({
+        timeout: CONNECTION_TIMEOUT_MS
+      })
     ]);
     if (!enabledResponse.data) {
       throw new Error('Quick Connect is disabled on this Jellyfin server.');
     }
     const response = await getQuickConnectApi(
       this.apiValue!
-    ).initiateQuickConnect();
+    ).initiateQuickConnect({ timeout: CONNECTION_TIMEOUT_MS });
     const secret = response.data.Secret;
     const code = response.data.Code;
     if (!secret || !code) {
@@ -776,7 +794,11 @@ export class JellyfinService extends EventEmitter {
         id: this.config.deviceId
       }
     });
-    this.apiValue = jellyfin.createApi(baseUrl, accessToken);
+    this.apiValue = jellyfin.createApi(
+      baseUrl,
+      accessToken,
+      axios.create({ timeout: API_TIMEOUT_MS })
+    );
   }
 
   private mapLibrary(item: BaseItemDto): LibraryView {

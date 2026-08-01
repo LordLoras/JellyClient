@@ -133,14 +133,14 @@ function MediaTile({ item, onSelect }: { item: VidaaMediaItem; onSelect(item: Vi
 
 function MediaRail({ title, eyebrow, items, onSelect }: {
   title: string;
-  eyebrow: string;
+  eyebrow?: string;
   items: VidaaMediaItem[];
   onSelect(item: VidaaMediaItem): void;
 }) {
   if (items.length === 0) return null;
   return (
     <section className="vida-rail">
-      <header><div><p>{eyebrow}</p><h2>{title}</h2></div><span>{items.length} titles <ChevronRight /></span></header>
+      <header><div>{eyebrow ? <p>{eyebrow}</p> : null}<h2>{title}</h2></div><span>{items.length} titles <ChevronRight /></span></header>
       <div className="vida-rail__track">
         {items.map((item) => <MediaTile item={item} key={item.id} onSelect={onSelect} />)}
       </div>
@@ -1291,7 +1291,7 @@ export function JellyfinApp() {
         <>
           <section className="vidaa-hero" style={hero.backdropUrl ? { backgroundImage: `linear-gradient(90deg, rgba(7,10,9,.98) 0%, rgba(7,10,9,.78) 40%, rgba(7,10,9,.2) 78%), url("${bridgeUrl(hero.backdropUrl)}")` } : undefined}>
             <div>
-              <p>{hero.playbackPositionTicks > 0 ? 'CONTINUE WATCHING' : hero.seriesName ? 'YOUR NEXT EPISODE' : 'FEATURED FROM JELLYFIN'}</p>
+              <p>{hero.playbackPositionTicks > 0 ? 'CONTINUE WATCHING' : hero.seriesName ? 'UP NEXT' : 'FEATURED'}</p>
               <h1>{hero.seriesName ?? hero.name}</h1>
               {hero.seriesName && <h2>{hero.indexLabel} · {hero.name}</h2>}
               <ul><li>{hero.productionYear}</li><li><Clock3 /> {duration(hero.runtimeTicks)}</li>{signalBadges(hero).map((badge) => <li className="format-pill" key={badge}>{badge}</li>)}</ul>
@@ -1300,10 +1300,10 @@ export function JellyfinApp() {
             </div>
           </section>
           <div className="vidaa-content">
-            <MediaRail eyebrow="PICK UP WHERE YOU LEFT OFF" items={home.resume} onSelect={(item) => void choose(item)} title="Continue watching" />
-            <MediaRail eyebrow="NEW EPISODES WAITING" items={home.nextUp} onSelect={(item) => void choose(item)} title="Up next" />
-            <MediaRail eyebrow="FRESH FROM YOUR SERVER" items={home.latest} onSelect={(item) => void choose(item)} title="Recently added" />
-            <section className="library-strip"><p>YOUR LIBRARIES</p><div>{home.libraries.map((library) => <button data-focusable key={library.id} onClick={() => { setBrowseHistory([]); void openBrowse(library.id, library.name); }} type="button">{library.name}</button>)}</div></section>
+            <MediaRail items={home.resume} onSelect={(item) => void choose(item)} title="Continue watching" />
+            <MediaRail items={home.nextUp} onSelect={(item) => void choose(item)} title="Up next" />
+            <MediaRail items={home.latest} onSelect={(item) => void choose(item)} title="Recently added" />
+            <section className="library-strip"><p>LIBRARIES</p><div>{home.libraries.map((library) => <button data-focusable key={library.id} onClick={() => { setBrowseHistory([]); void openBrowse(library.id, library.name); }} type="button">{library.name}</button>)}</div></section>
           </div>
         </>
       )}

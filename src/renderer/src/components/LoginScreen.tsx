@@ -1,12 +1,10 @@
 import {
   ArrowRight,
-  CheckCircle2,
   Eye,
   EyeOff,
   LockKeyhole,
   Radar,
   RefreshCw,
-  Server,
   ShieldCheck,
   Smartphone,
   X
@@ -175,36 +173,17 @@ export function LoginScreen({
   return (
     <main className="login">
       <div className="login__aurora" />
-      <section className="login__story">
+      <div className="login__center">
         <Brand />
-        <div className="login__headline">
-          <p className="eyebrow">YOUR SCREENING ROOM, IN SYNC</p>
-          <h1>
-            The image comes first.
-            <em>The room follows.</em>
-          </h1>
-          <p>
-            A native-window Jellyfin client built around HDR10, faithful
-            subtitles, and SyncPlay that you join exactly once.
-          </p>
-        </div>
-        <div className="login__promises" aria-label="Core capabilities">
-          <span><CheckCircle2 /> HDR10 / PQ output</span>
-          <span><CheckCircle2 /> ASS + PGS subtitles</span>
-          <span><CheckCircle2 /> One-session SyncPlay</span>
-        </div>
-      </section>
-
-      <section className="login__panel">
-        <div className="login__panel-header">
-          <span className="icon-plate"><Server /></span>
+        <section className="login__panel">
+          <div className="login__panel-header">
           <div>
-            <p className="eyebrow">CONNECTION PROFILE</p>
-            <h2>Meet your Jellyfin server</h2>
+              <h1>Connect to Jellyfin</h1>
+              <p>Enter your server address and account details.</p>
+            </div>
           </div>
-        </div>
 
-        <form onSubmit={submit} className="login__form">
+          <form onSubmit={submit} className="login__form">
           <div className="server-discovery">
             <button
               className="button button--glass"
@@ -346,19 +325,20 @@ export function LoginScreen({
           >
             <Smartphone /> Use Quick Connect instead
           </button>
-        </form>
+          </form>
 
-        <footer className="login__security">
-          <ShieldCheck />
-          <p>
-            Your password is used once and never written to disk.
-            <button type="button" onClick={() => window.jellyClient.openConfigFolder()}>
-              Open configuration folder
-            </button>
-          </p>
-          <span className="sr-only">{configPath}</span>
-        </footer>
-      </section>
+          <footer className="login__security">
+            <ShieldCheck />
+            <p>
+              Your password is used to sign in and is not saved.
+              <button type="button" onClick={() => window.jellyClient.openConfigFolder()}>
+                Open configuration folder
+              </button>
+            </p>
+            <span className="sr-only">{configPath}</span>
+          </footer>
+        </section>
+      </div>
       {quickConnect && (
         <div className="quick-connect" role="dialog" aria-modal="true">
           <section>

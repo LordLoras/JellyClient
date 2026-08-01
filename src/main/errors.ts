@@ -27,6 +27,9 @@ export function userFacingError(error: unknown, fallback: string): string {
     if (error.code === 'ENOTFOUND') {
       return 'The Jellyfin server address could not be found.';
     }
+    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+      return 'The Jellyfin server did not respond. Check that it is running and reachable.';
+    }
     return redact(error.message || fallback);
   }
 
