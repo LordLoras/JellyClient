@@ -41,6 +41,10 @@ import {
   type MpvFileEvent
 } from './playback-lifecycle.js';
 import { mpvAuthorizationHeaderField } from './mpv-http.js';
+import {
+  mpvSubtitleArguments,
+  mpvSubtitleProperties
+} from './subtitle-appearance.js';
 
 interface MpvMessage {
   request_id?: number;
@@ -307,6 +311,7 @@ export class MpvService extends EventEmitter {
       await this.command(['set_property', 'pause', request.paused]);
       const player = this.config.settings.player;
       await this.command(['set_property', 'speed', player.playbackSpeed]);
+      await this.applySubtitleAppearance(player);
       await this.command(['set_property', 'sub-delay', player.subtitleDelaySeconds]);
       await this.command(['set_property', 'audio-delay', player.audioDelaySeconds]);
       await this.applyAudioOutputSettings(player);
@@ -443,6 +448,14 @@ export class MpvService extends EventEmitter {
     await this.command(['set_property', 'sub-delay', value]);
     await this.showHud(`Subtitle delay ${formatSignedSeconds(value)}`);
     return this.state;
+  }
+
+  async applySubtitleAppearance(
+    player: AppSettings['player'] = this.config.settings.player
+  ): Promise<void> {
+    for (const property of mpvSubtitleProperties(player)) {
+      await this.command(['set_property', property.name, property.value]);
+    }
   }
 
   async setAudioDelay(seconds: number): Promise<PlaybackState> {
@@ -668,6 +681,8 @@ export class MpvService extends EventEmitter {
       `--ontop=${settings.player.alwaysOnTop ? 'yes' : 'no'}`,
       `--input-ipc-server=${this.pipeName}`
     ];
+
+    args.push(...mpvSubtitleArguments(settings.player));
 
     const passthroughCodecs = settings.player.audioOutputMode === 'passthrough'
       ? mpvPassthroughCodecs(settings.player.audioPassthrough)

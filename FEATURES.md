@@ -49,6 +49,9 @@ library data and stream negotiation, then opens playback in MPV.
 - Prefer forced subtitles and optionally avoid SDH/CC tracks.
 - Remember manually selected audio and subtitle languages for each series.
 - Adjust playback speed, subtitle delay, and audio delay while watching.
+- Scale text subtitles from 50–200% with named presets, 1% numeric adjustment,
+  text-color choices, shadow strength, and an in-app preview. MPV receives the
+  saved appearance settings directly; bitmap PGS tracks keep their source styling.
 - Choose any audio endpoint reported by MPV, including speakers, headphones,
   a television over HDMI, or a directly connected receiver.
 - Use decoded PCM by default or enable passthrough separately for AC-3,

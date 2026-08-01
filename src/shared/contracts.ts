@@ -112,6 +112,8 @@ export interface SeriesPlaybackPreference {
   subtitlesEnabled: boolean;
 }
 
+export type SubtitleShadowStrength = 'off' | 'soft' | 'strong';
+
 export interface PlayerSettings {
   mpvPath: string;
   hdrMode: HdrMode;
@@ -131,6 +133,9 @@ export interface PlayerSettings {
   rememberSeriesPreferences: boolean;
   seriesPreferences: Record<string, SeriesPlaybackPreference>;
   playbackSpeed: number;
+  subtitleScalePercent: number;
+  subtitleTextColor: string;
+  subtitleShadowStrength: SubtitleShadowStrength;
   subtitleDelaySeconds: number;
   audioDelaySeconds: number;
   autoSkipIntro: boolean;

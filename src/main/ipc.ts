@@ -282,6 +282,9 @@ export function registerIpc(services: Services): () => void {
 
   handle('settings:save', async (_event, raw) => {
     const settings = await config.saveSettings(settingsSchema.parse(raw));
+    if (mpv.isConnected) {
+      await mpv.applySubtitleAppearance(settings.player);
+    }
     await mpv.probe(settings.player.mpvPath || undefined);
     return settings;
   });

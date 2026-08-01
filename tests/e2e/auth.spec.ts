@@ -702,6 +702,12 @@ test('saves Windows playback and home-screen settings through the real UI', asyn
   });
   await page.getByLabel('Subtitle delay (seconds)').fill('0.4');
   await page.getByLabel('Audio delay (seconds)').fill('-0.2');
+  await page.getByLabel('Subtitle scale percentage').fill('137');
+  await page.getByRole('button', { name: 'Yellow #FFD84A' }).click();
+  await page.getByRole('button', { name: /Strong 3 px/ }).click();
+  await page.locator('.subtitle-appearance-settings').screenshot({
+    path: resolve('artifacts', 'subtitle-appearance-settings.png')
+  });
   await page.getByRole('button', { name: 'Hide Recommended' }).click();
   await page.getByRole('button', { name: 'Move My List up' }).click();
   await page.getByRole('button', { name: 'Save settings' }).click();
@@ -718,6 +724,9 @@ test('saves Windows playback and home-screen settings through the real UI', asyn
       autoSkipOutro: boolean;
       skipSegmentKey: string;
       skipPromptDurationSeconds: number;
+      subtitleScalePercent: number;
+      subtitleTextColor: string;
+      subtitleShadowStrength: string;
       subtitleDelaySeconds: number;
       audioDelaySeconds: number;
       };
@@ -733,6 +742,9 @@ test('saves Windows playback and home-screen settings through the real UI', asyn
     autoSkipOutro: true,
     skipSegmentKey: 'F4',
     skipPromptDurationSeconds: 20,
+    subtitleScalePercent: 137,
+    subtitleTextColor: '#FFD84A',
+    subtitleShadowStrength: 'strong',
     subtitleDelaySeconds: 0.4,
     audioDelaySeconds: -0.2
   });
@@ -752,6 +764,9 @@ test('saves Windows playback and home-screen settings through the real UI', asyn
   await page.getByRole('combobox', {
     name: 'Skip prompt / auto-skip delay'
   }).selectOption('15');
+  await page.getByRole('button', { name: /Default 100%/ }).click();
+  await page.getByRole('button', { name: 'White #FFFFFF' }).click();
+  await page.getByRole('button', { name: /Off MPV default/ }).click();
   await page.getByRole('button', { name: 'Save settings' }).click();
   await expect(page.getByText('Playback settings saved.')).toBeVisible();
 });

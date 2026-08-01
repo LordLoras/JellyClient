@@ -47,6 +47,9 @@ describe('IPC validation', () => {
     delete legacy.player.preferredDisplayId;
     delete legacy.player.skipSegmentKey;
     delete legacy.player.skipPromptDurationSeconds;
+    delete legacy.player.subtitleScalePercent;
+    delete legacy.player.subtitleTextColor;
+    delete legacy.player.subtitleShadowStrength;
     delete (legacy as Partial<AppSettings>).home;
 
     const migrated = settingsSchema.parse(legacy);
@@ -55,9 +58,27 @@ describe('IPC validation', () => {
     expect(migrated.player.preferredDisplayId).toBe('auto');
     expect(migrated.player.skipSegmentKey).toBe('N');
     expect(migrated.player.skipPromptDurationSeconds).toBe(15);
+    expect(migrated.player.subtitleScalePercent).toBe(100);
+    expect(migrated.player.subtitleTextColor).toBe('#FFFFFF');
+    expect(migrated.player.subtitleShadowStrength).toBe('off');
     expect(migrated.home.sectionOrder).toContain('resume');
     expect(migrated.home.hiddenSections).toEqual([]);
     expect(migrated.home.dismissedNextUpSeriesIds).toEqual([]);
+  });
+
+  it('normalizes and validates subtitle appearance settings', () => {
+    const settings = structuredClone(defaultSettings);
+    settings.player.subtitleScalePercent = 135;
+    settings.player.subtitleTextColor = '#f4d35e';
+    settings.player.subtitleShadowStrength = 'strong';
+
+    const parsed = settingsSchema.parse(settings);
+    expect(parsed.player.subtitleScalePercent).toBe(135);
+    expect(parsed.player.subtitleTextColor).toBe('#F4D35E');
+    expect(parsed.player.subtitleShadowStrength).toBe('strong');
+
+    settings.player.subtitleScalePercent = 205;
+    expect(() => settingsSchema.parse(settings)).toThrow();
   });
 
   it('normalizes and validates the segment shortcut', () => {

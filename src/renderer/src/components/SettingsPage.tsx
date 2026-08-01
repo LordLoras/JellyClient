@@ -1,4 +1,5 @@
 import {
+  Accessibility,
   ArrowDown,
   ArrowUp,
   Captions,
@@ -19,11 +20,13 @@ import {
   useEffect,
   useState
 } from 'react';
+import type { CSSProperties } from 'react';
 import type {
   AppSettings,
   HomeSectionId,
   MpvAudioDevice,
   MpvCapability,
+  PlayerSettings,
   WindowsDisplay
 } from '@shared/contracts.js';
 import { friendlyError } from '../format';
@@ -166,7 +169,7 @@ export function SettingsPage({
       <header className="page-title">
         <p className="eyebrow">PLAYBACK SETTINGS</p>
         <h1>Settings</h1>
-        <p>Changes apply the next time the native MPV window starts.</p>
+        <p>Saved defaults apply to the current player where supported and every new video.</p>
       </header>
 
       <div className="settings-grid">
@@ -367,6 +370,20 @@ export function SettingsPage({
             No matching language means subtitles stay off. A manual track
             choice in the player always wins for the current video.
           </p>
+        </section>
+
+        <section className="settings-card settings-card--full subtitle-appearance-settings">
+          <header>
+            <span className="icon-plate"><Accessibility /></span>
+            <div>
+              <h2>Subtitle appearance</h2>
+              <p>Scale and contrast controls for text subtitles rendered by MPV.</p>
+            </div>
+          </header>
+          <SubtitleAppearanceEditor
+            player={draft.player}
+            onChange={(player) => setDraft({ ...draft, player })}
+          />
         </section>
 
         <section className="settings-card settings-card--full audio-settings">
@@ -790,6 +807,205 @@ function LanguageSelect({
       <option value="zho">Chinese</option>
     </select>
   );
+}
+
+const SUBTITLE_SCALE_PRESETS = [
+  { label: 'Small', value: 80 },
+  { label: 'Default', value: 100 },
+  { label: 'Large', value: 125 },
+  { label: 'Extra large', value: 150 }
+] as const;
+
+const SUBTITLE_COLOR_PRESETS = [
+  { label: 'White', value: '#FFFFFF' },
+  { label: 'Warm white', value: '#FFF1D6' },
+  { label: 'Yellow', value: '#FFD84A' },
+  { label: 'Cyan', value: '#79E6FF' }
+] as const;
+
+const SUBTITLE_SHADOW_PRESETS = [
+  { label: 'Off', detail: 'MPV default', value: 'off' },
+  { label: 'Soft', detail: '1.5 px', value: 'soft' },
+  { label: 'Strong', detail: '3 px', value: 'strong' }
+] as const;
+
+function SubtitleAppearanceEditor({
+  player,
+  onChange
+}: {
+  player: PlayerSettings;
+  onChange(player: PlayerSettings): void;
+}) {
+  const update = (patch: Partial<PlayerSettings>) => onChange({ ...player, ...patch });
+  const selectedScale = SUBTITLE_SCALE_PRESETS.find(
+    (preset) => preset.value === player.subtitleScalePercent
+  );
+  const selectedColor = SUBTITLE_COLOR_PRESETS.find(
+    (preset) => preset.value === player.subtitleTextColor
+  );
+  const previewStyle = {
+    '--subtitle-preview-scale': player.subtitleScalePercent / 100,
+    '--subtitle-preview-color': player.subtitleTextColor,
+    '--subtitle-preview-shadow': previewShadow(player.subtitleShadowStrength)
+  } as CSSProperties;
+
+  return (
+    <div className="subtitle-appearance-layout">
+      <div className="subtitle-appearance-controls">
+        <div className="subtitle-control-group">
+          <div className="subtitle-control-heading">
+            <span>
+              <strong>Text size</strong>
+              <small>{selectedScale?.label ?? 'Custom'} · {player.subtitleScalePercent}%</small>
+            </span>
+            <output htmlFor="subtitle-scale subtitle-scale-number">
+              {player.subtitleScalePercent}%
+            </output>
+          </div>
+          <div className="subtitle-scale-row">
+            <div className="subtitle-scale-range">
+              <input
+                aria-label="Subtitle text size"
+                id="subtitle-scale"
+                type="range"
+                min={50}
+                max={200}
+                step={5}
+                value={player.subtitleScalePercent}
+                style={{
+                  '--subtitle-scale-position':
+                    ((player.subtitleScalePercent - 50) / 150) * 100
+                } as CSSProperties}
+                onChange={(event) => update({
+                  subtitleScalePercent: Number(event.target.value)
+                })}
+              />
+              <i className="subtitle-scale-default" aria-hidden="true">
+                <span>100</span>
+              </i>
+            </div>
+            <label className="subtitle-scale-number" htmlFor="subtitle-scale-number">
+              <input
+                aria-label="Subtitle scale percentage"
+                id="subtitle-scale-number"
+                type="number"
+                min={50}
+                max={200}
+                step={1}
+                value={player.subtitleScalePercent}
+                onChange={(event) => {
+                  const value = event.currentTarget.valueAsNumber;
+                  if (!Number.isFinite(value)) return;
+                  update({ subtitleScalePercent: Math.min(200, Math.max(50, Math.round(value))) });
+                }}
+              />
+              <span>%</span>
+            </label>
+          </div>
+          <div className="subtitle-preset-grid subtitle-preset-grid--scale">
+            {SUBTITLE_SCALE_PRESETS.map((preset) => (
+              <button
+                className={player.subtitleScalePercent === preset.value ? 'is-selected' : ''}
+                type="button"
+                key={preset.value}
+                aria-pressed={player.subtitleScalePercent === preset.value}
+                onClick={() => update({ subtitleScalePercent: preset.value })}
+              >
+                <strong>{preset.label}</strong>
+                <span>{preset.value}%</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="subtitle-control-group">
+          <div className="subtitle-control-heading">
+            <span>
+              <strong>Text color</strong>
+              <small>{selectedColor?.label ?? 'Custom'} · {player.subtitleTextColor}</small>
+            </span>
+          </div>
+          <div className="subtitle-color-grid">
+            {SUBTITLE_COLOR_PRESETS.map((preset) => (
+              <button
+                className={player.subtitleTextColor === preset.value ? 'is-selected' : ''}
+                type="button"
+                key={preset.value}
+                aria-label={`${preset.label} ${preset.value}`}
+                aria-pressed={player.subtitleTextColor === preset.value}
+                onClick={() => update({ subtitleTextColor: preset.value })}
+              >
+                <i style={{ backgroundColor: preset.value }} />
+                <span><strong>{preset.label}</strong><small>{preset.value}</small></span>
+              </button>
+            ))}
+            <label className={`subtitle-custom-color${selectedColor ? '' : ' is-selected'}`}>
+              <input
+                aria-label="Custom subtitle text color"
+                type="color"
+                value={player.subtitleTextColor}
+                onChange={(event) => update({ subtitleTextColor: event.target.value.toUpperCase() })}
+              />
+              <span><strong>Custom</strong><small>{player.subtitleTextColor}</small></span>
+            </label>
+          </div>
+        </div>
+
+        <div className="subtitle-control-group">
+          <div className="subtitle-control-heading">
+            <span>
+              <strong>Text shadow</strong>
+              <small>Extra separation from bright scenes</small>
+            </span>
+          </div>
+          <div className="subtitle-preset-grid subtitle-preset-grid--shadow">
+            {SUBTITLE_SHADOW_PRESETS.map((preset) => (
+              <button
+                className={player.subtitleShadowStrength === preset.value ? 'is-selected' : ''}
+                type="button"
+                key={preset.value}
+                aria-pressed={player.subtitleShadowStrength === preset.value}
+                onClick={() => update({ subtitleShadowStrength: preset.value })}
+              >
+                <strong>{preset.label}</strong>
+                <span>{preset.detail}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="subtitle-preview" style={previewStyle}>
+        <div className="subtitle-preview__topline">
+          <span>LIVE PREVIEW</span>
+          <small>Text subtitles</small>
+        </div>
+        <div className="subtitle-preview__scene" aria-label="Subtitle appearance preview">
+          <i className="subtitle-preview__light" />
+          <span className="subtitle-preview__subject subtitle-preview__subject--left" />
+          <span className="subtitle-preview__subject subtitle-preview__subject--right" />
+          <p>Everything we watch should feel this clear.</p>
+        </div>
+        <div className="subtitle-preview__readout">
+          <span>{player.subtitleScalePercent}%</span>
+          <span>{player.subtitleTextColor}</span>
+          <span>{player.subtitleShadowStrength} shadow</span>
+        </div>
+        <p className="settings-note settings-note--signal">
+          Scale applies to dialogue without enlarging ASS signs. Choosing a custom
+          color or shadow asks MPV to override styled text subtitles. PGS subtitles
+          are images and keep their original appearance.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function previewShadow(strength: PlayerSettings['subtitleShadowStrength']): string {
+  const outline = '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000';
+  if (strength === 'soft') return `${outline}, 0 3px 6px rgba(0, 0, 0, .88)`;
+  if (strength === 'strong') return `${outline}, 0 5px 12px #000, 3px 3px 2px rgba(0, 0, 0, .95)`;
+  return outline;
 }
 
 function Toggle({

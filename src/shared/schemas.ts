@@ -61,6 +61,13 @@ export const settingsSchema = z.object({
       })
     ).default({}),
     playbackSpeed: z.number().min(0.25).max(4).default(1),
+    subtitleScalePercent: z.number().int().min(50).max(200).default(100),
+    subtitleTextColor: z.string()
+      .trim()
+      .regex(/^#[0-9A-Fa-f]{6}$/, 'Choose a six-digit hex color.')
+      .transform((value) => value.toUpperCase())
+      .default('#FFFFFF'),
+    subtitleShadowStrength: z.enum(['off', 'soft', 'strong']).default('off'),
     subtitleDelaySeconds: z.number().min(-30).max(30).default(0),
     audioDelaySeconds: z.number().min(-30).max(30).default(0),
     autoSkipIntro: z.boolean().default(false),
