@@ -11,7 +11,15 @@ const syncApi = vi.hoisted(() => ({
   syncPlayReady: vi.fn(async () => undefined),
   syncPlayBuffering: vi.fn(async () => undefined),
   syncPlayJoinGroup: vi.fn(async () => undefined),
-  syncPlayPing: vi.fn(async () => undefined)
+  syncPlayPing: vi.fn(async () => undefined),
+  syncPlayGetGroups: vi.fn(async () => ({
+    data: [{
+      GroupId: 'group-1',
+      GroupName: 'Movie night',
+      State: 'Playing',
+      Participants: ['One', 'Two']
+    }]
+  }))
 }));
 
 const timeApi = vi.hoisted(() => ({
@@ -84,6 +92,7 @@ function subject() {
     ): void;
     processCommand(command: Record<string, unknown>): void;
     processQueue(queue: Record<string, unknown>): Promise<void>;
+    confirmJoined(group: NonNullable<typeof initialSyncPlayState.currentGroup>): void;
   };
   internal.stateValue = {
     ...structuredClone(initialSyncPlayState),
@@ -356,6 +365,55 @@ describe('SyncPlay native MPV controls', () => {
     expect(state.error).toBeNull();
   });
 
+  it('checks local readiness, room state, and clock quality without rejoining', async () => {
+    const { service } = subject();
+
+    const state = await service.checkRoom();
+
+    expect(timeApi.getUtcTime).toHaveBeenCalledTimes(5);
+    expect(syncApi.syncPlayGetGroups).toHaveBeenCalledOnce();
+    expect(syncApi.syncPlayJoinGroup).not.toHaveBeenCalled();
+    expect(state.roomCheck).toMatchObject({
+      status: 'ready',
+      localReady: true,
+      itemMatched: true,
+      serverState: 'Playing'
+    });
+    expect(state.roomCheck.checkedAt).not.toBeNull();
+    expect(state.error).toBeNull();
+  });
+
+  it('refreshes the server clock periodically while the room stays joined', async () => {
+    const { internal, service } = subject();
+    internal.confirmJoined(internal.stateValue.currentGroup!);
+    timeApi.getUtcTime.mockClear();
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(timeApi.getUtcTime).toHaveBeenCalledTimes(3);
+    service.reset();
+  });
+
+  it('reports when the local player is the part still loading', async () => {
+    const { mpv, service } = subject();
+    mpv.isMediaLoaded = false;
+    mpv.state = {
+      ...mpv.state,
+      item: null,
+      status: 'loading',
+      paused: true
+    };
+    mpv.emit('state', mpv.state);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(service.state.roomCheck).toMatchObject({
+      status: 'waiting',
+      localReady: false,
+      itemMatched: false,
+      playerStatus: 'loading'
+    });
+  });
+
   it('continuously corrects hard drift after the initial start window', async () => {
     const { internal, mpv, playback } = subject();
     mpv.state = { ...mpv.state, positionSeconds: 10, paused: true };
@@ -386,6 +444,39 @@ describe('SyncPlay native MPV controls', () => {
       playback.seekLocal.mock.calls as unknown as Array<[number]>
     ).at(-1)?.[0] ?? 0;
     expect(lastSeek).toBeGreaterThan(12.5);
+  });
+
+  it('gently corrects smaller ongoing drift instead of waiting for a hard seek', async () => {
+    const { internal, mpv, service } = subject();
+    mpv.state = { ...mpv.state, positionSeconds: 10, paused: true };
+    const now = new Date(Date.now()).toISOString();
+    internal.processCommand({
+      Command: 'Unpause',
+      GroupId: 'group-1',
+      PlaylistItemId: 'playlist-1',
+      PositionTicks: 100_000_000,
+      When: now,
+      EmittedAt: now
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    mpv.setSpeed.mockClear();
+
+    mpv.state = {
+      ...mpv.state,
+      paused: false,
+      status: 'playing'
+    };
+    await vi.advanceTimersByTimeAsync(2_100);
+    mpv.state.positionSeconds = 13.3;
+    mpv.emit('state', mpv.state);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mpv.setSpeed).toHaveBeenCalledWith(0.98);
+    expect(service.state.roomCheck).toMatchObject({
+      status: 'correcting',
+      automaticCorrections: 1,
+      lastCorrectionKind: 'speed'
+    });
   });
 
   it('keeps only the newest command across randomized rapid command bursts', async () => {

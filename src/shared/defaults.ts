@@ -164,5 +164,19 @@ export const initialSyncPlayState: SyncPlayState = {
   clockOffsetMs: 0,
   roundTripMs: 0,
   driftMs: 0,
+  roomCheck: {
+    status: 'idle',
+    localReady: false,
+    itemMatched: false,
+    timelineAvailable: false,
+    playerStatus: 'idle',
+    serverState: 'Idle',
+    clockJitterMs: 0,
+    automaticCorrections: 0,
+    lastCorrectionMs: null,
+    lastCorrectionKind: 'none',
+    checkedAt: null,
+    message: 'Choose something to watch together to begin the room check.'
+  },
   error: null
 };

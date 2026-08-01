@@ -7,7 +7,15 @@ import {
   RotateCcw,
   Star
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState
+} from 'react';
+import type { CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import type { MediaItem } from '@shared/contracts.js';
 import { formatDurationFromTicks } from '../format';
 
@@ -38,14 +46,50 @@ export function MediaCard({
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const menuPopoverRef = useRef<HTMLDivElement>(null);
+  const [menuPosition, setMenuPosition] = useState<CSSProperties | null>(null);
+  const positionMenu = useCallback(() => {
+    const trigger = menuTriggerRef.current;
+    if (!trigger) return;
+    const triggerBounds = trigger.getBoundingClientRect();
+    const menuWidth = Math.min(220, window.innerWidth - 16);
+    const menuHeight = menuPopoverRef.current?.offsetHeight ?? 132;
+    const left = Math.max(
+      8,
+      Math.min(triggerBounds.right - menuWidth, window.innerWidth - menuWidth - 8)
+    );
+    const fitsBelow = triggerBounds.bottom + 8 + menuHeight <= window.innerHeight - 8;
+    const top = fitsBelow
+      ? triggerBounds.bottom + 8
+      : Math.max(8, triggerBounds.top - menuHeight - 8);
+    setMenuPosition({ left, top, width: menuWidth });
+  }, []);
   useEffect(() => {
     if (!menuOpen) return;
     const close = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
+      const target = event.target as Node;
+      if (
+        !menuRef.current?.contains(target) &&
+        !menuPopoverRef.current?.contains(target)
+      ) setMenuOpen(false);
     };
     window.addEventListener('pointerdown', close);
     return () => window.removeEventListener('pointerdown', close);
   }, [menuOpen]);
+  useLayoutEffect(() => {
+    if (!menuOpen) {
+      setMenuPosition(null);
+      return;
+    }
+    positionMenu();
+    window.addEventListener('resize', positionMenu);
+    window.addEventListener('scroll', positionMenu, true);
+    return () => {
+      window.removeEventListener('resize', positionMenu);
+      window.removeEventListener('scroll', positionMenu, true);
+    };
+  }, [menuOpen, positionMenu]);
   const isNextUp = presentation === 'next-up' && Boolean(item.seriesName);
   const title = isNextUp ? item.seriesName! : item.name;
   const context = isNextUp
@@ -103,6 +147,7 @@ export function MediaCard({
         {(onFavorite || onPlayed || onRestart) && (
           <div className="media-card__menu" ref={menuRef}>
             <button
+              ref={menuTriggerRef}
               className="media-card__menu-trigger"
               aria-label={`More actions for ${item.name}`}
               aria-expanded={menuOpen}
@@ -110,8 +155,13 @@ export function MediaCard({
             >
               <MoreHorizontal />
             </button>
-            {menuOpen ? (
-              <div className="media-card__menu-popover" role="menu">
+            {menuOpen ? createPortal(
+              <div
+                className="media-card__menu-popover"
+                ref={menuPopoverRef}
+                role="menu"
+                style={menuPosition ?? { visibility: 'hidden' }}
+              >
                 {onRestart && item.canPlay ? (
                   <button role="menuitem" onClick={() => {
                     setMenuOpen(false);
@@ -130,7 +180,8 @@ export function MediaCard({
                     onPlayed(item);
                   }}><Check /> {item.isPlayed ? 'Mark unwatched' : 'Mark watched'}</button>
                 ) : null}
-              </div>
+              </div>,
+              document.body
             ) : null}
           </div>
         )}

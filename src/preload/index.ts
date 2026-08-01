@@ -71,6 +71,7 @@ const api: JellyClientApi = {
   syncPlayAction: (action) =>
     ipcRenderer.invoke('syncplay:action', action),
   resyncSyncPlay: () => ipcRenderer.invoke('syncplay:resync'),
+  checkSyncPlayRoom: () => ipcRenderer.invoke('syncplay:check-room'),
   subscribe: (listener: (event: ClientEvent) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, value: ClientEvent) => {
       listener(value);

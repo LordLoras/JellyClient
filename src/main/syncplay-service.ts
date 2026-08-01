@@ -6,6 +6,7 @@ import type { SendCommand } from '@jellyfin/sdk/lib/generated-client/models/send
 import type {
   PlayMediaInput,
   SyncPlayGroup,
+  SyncPlayRoomCheck,
   SyncPlayState,
   WatchTogetherInput
 } from '@shared/contracts.js';
@@ -44,6 +45,15 @@ interface PlaybackTimelineAnchor {
   playing: boolean;
 }
 
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const ordered = values.toSorted((a, b) => a - b);
+  const middle = Math.floor(ordered.length / 2);
+  return ordered.length % 2 === 0
+    ? ((ordered[middle - 1] ?? 0) + (ordered[middle] ?? 0)) / 2
+    : ordered[middle] ?? 0;
+}
+
 export class SyncPlayService {
   private readonly jellyfin: JellyfinService;
   private readonly socket: JellyfinWebSocketService;
@@ -80,6 +90,9 @@ export class SyncPlayService {
   private lastDriftPublishedAt = 0;
   private driftCorrectionInFlight = false;
   private lastAutomaticCorrectionAt = 0;
+  private roomCheckInFlight = false;
+  private clockRefreshTimer: NodeJS.Timeout | null = null;
+  private clockRefreshInFlight = false;
 
   constructor(
     jellyfin: JellyfinService,
@@ -356,6 +369,47 @@ export class SyncPlayService {
     });
   }
 
+  checkRoom(): Promise<SyncPlayState> {
+    return this.serialize(async () => {
+      if (
+        this.stateValue.membership !== 'joined' ||
+        !this.stateValue.currentGroup
+      ) {
+        throw new Error('Join a SyncPlay group before running Room Check.');
+      }
+      this.roomCheckInFlight = true;
+      this.setState({ ...this.stateValue, error: null });
+      try {
+        await this.socket.waitUntilConnected();
+        await this.synchronizeClock(5);
+        await this.listGroups();
+        if (
+          this.stateValue.currentGroup?.state === 'Waiting' &&
+          this.playerReadyForCurrentQueue()
+        ) {
+          this.lastBuffering = null;
+          await this.sendReady();
+        }
+        await this.correctOngoingDrift(true);
+      } catch (error) {
+        this.setState({
+          ...this.stateValue,
+          error: userFacingError(error, 'Room Check could not finish.')
+        });
+      } finally {
+        this.roomCheckInFlight = false;
+        this.setState({
+          ...this.stateValue,
+          roomCheck: {
+            ...this.stateValue.roomCheck,
+            checkedAt: new Date().toISOString()
+          }
+        });
+      }
+      return this.state;
+    });
+  }
+
   reset(): void {
     this.invalidatePlaybackWork();
     this.cancelScheduledCommand();
@@ -369,6 +423,8 @@ export class SyncPlayService {
     this.lastDriftPublishedAt = 0;
     this.lastAutomaticCorrectionAt = 0;
     this.driftCorrectionInFlight = false;
+    this.roomCheckInFlight = false;
+    this.stopClockRefresh();
     this.clearNativeControlRelays();
     this.setState(structuredClone(initialSyncPlayState));
   }
@@ -617,10 +673,12 @@ export class SyncPlayService {
           this.suppressNativeControlRelay('seek', 1_500, null, targetSeconds);
           await this.playback.seekLocal(targetSeconds);
           if (generation !== this.commandGeneration) return;
+          this.recordCorrection('seek', driftMs);
         } else if (Math.abs(driftMs) >= softCorrectionThresholdMs) {
           const correctionRate = 0.03;
           await this.mpv.setSpeed(driftMs > 0 ? 1 - correctionRate : 1 + correctionRate);
           if (generation !== this.commandGeneration) return;
+          this.recordCorrection('speed', driftMs);
           this.scheduleSpeedReset(
             Math.min(
               12_000,
@@ -692,6 +750,7 @@ export class SyncPlayService {
 
   private async onPlayerState(): Promise<void> {
     this.publishMeasuredDrift();
+    this.refreshRoomCheck();
     if (
       this.stateValue.membership !== 'joined' ||
       !this.stateValue.playlistItemId
@@ -789,9 +848,9 @@ export class SyncPlayService {
     };
   }
 
-  private async synchronizeClock(): Promise<void> {
+  private async synchronizeClock(sampleCount = 8): Promise<void> {
     const samples: ClockSample[] = [];
-    for (let index = 0; index < 8; index += 1) {
+    for (let index = 0; index < sampleCount; index += 1) {
       const t0 = Date.now();
       const response = await getTimeSyncApi(this.jellyfin.api).getUtcTime();
       const t3 = Date.now();
@@ -804,17 +863,28 @@ export class SyncPlayService {
         });
       }
     }
-    const best = samples.sort((a, b) => a.roundTrip - b.roundTrip)[0];
-    if (!best) return;
+    if (samples.length === 0) return;
+    const reliable = samples
+      .toSorted((a, b) => a.roundTrip - b.roundTrip)
+      .slice(0, Math.max(1, Math.ceil(samples.length / 2)));
+    const offset = median(reliable.map((sample) => sample.offset));
+    const roundTrip = median(reliable.map((sample) => sample.roundTrip));
+    const clockJitterMs = median(
+      reliable.map((sample) => Math.abs(sample.offset - offset))
+    );
     this.setState({
       ...this.stateValue,
-      clockOffsetMs: best.offset,
-      roundTripMs: best.roundTrip
+      clockOffsetMs: offset,
+      roundTripMs: roundTrip,
+      roomCheck: {
+        ...this.stateValue.roomCheck,
+        clockJitterMs
+      }
     });
     try {
       await getSyncPlayApi(this.jellyfin.api).syncPlayPing({
         pingRequestDto: {
-          Ping: Math.round(best.roundTrip / 2)
+          Ping: Math.round(roundTrip / 2)
         }
       });
     } catch {
@@ -837,6 +907,30 @@ export class SyncPlayService {
     }
   }
 
+  private startClockRefresh(): void {
+    this.stopClockRefresh();
+    this.clockRefreshTimer = setInterval(() => {
+      if (
+        this.clockRefreshInFlight ||
+        this.stateValue.membership !== 'joined'
+      ) return;
+      this.clockRefreshInFlight = true;
+      void this.synchronizeClock(3)
+        .then(() => this.correctOngoingDrift())
+        .catch(() => undefined)
+        .finally(() => {
+          this.clockRefreshInFlight = false;
+        });
+    }, 30_000);
+    this.clockRefreshTimer.unref();
+  }
+
+  private stopClockRefresh(): void {
+    if (this.clockRefreshTimer) clearInterval(this.clockRefreshTimer);
+    this.clockRefreshTimer = null;
+    this.clockRefreshInFlight = false;
+  }
+
   private confirmJoined(group: SyncPlayGroup): void {
     this.setState({
       ...this.stateValue,
@@ -844,6 +938,7 @@ export class SyncPlayService {
       currentGroup: group,
       error: null
     });
+    this.startClockRefresh();
   }
 
   private confirmLeft(): void {
@@ -859,6 +954,8 @@ export class SyncPlayService {
     this.lastDriftPublishedAt = 0;
     this.lastAutomaticCorrectionAt = 0;
     this.driftCorrectionInFlight = false;
+    this.roomCheckInFlight = false;
+    this.stopClockRefresh();
     this.clearNativeControlRelays();
     this.setState({
       ...this.stateValue,
@@ -916,10 +1013,130 @@ export class SyncPlayService {
   }
 
   private setState(state: SyncPlayState): void {
-    this.stateValue = state;
+    this.stateValue = {
+      ...state,
+      roomCheck: this.deriveRoomCheck(state)
+    };
     this.events.emitClient({
       type: 'syncplay',
       data: this.state
+    });
+  }
+
+  private deriveRoomCheck(state: SyncPlayState): SyncPlayRoomCheck {
+    const previous = state.roomCheck;
+    const player = this.mpv.state;
+    const hasQueue = Boolean(state.groupQueueItemId && state.playlistItemId);
+    const itemMatched = Boolean(
+      hasQueue && player.item?.id === state.groupQueueItemId
+    );
+    const localReady = Boolean(
+      hasQueue &&
+      itemMatched &&
+      this.mpv.isConnected &&
+      this.mpv.isMediaLoaded &&
+      !player.buffering &&
+      player.status !== 'loading' &&
+      player.status !== 'starting' &&
+      player.status !== 'error'
+    );
+    const timelineAvailable = Boolean(
+      this.timelineAnchor &&
+      this.timelineAnchor.playlistItemId === state.playlistItemId
+    );
+    const serverState = state.currentGroup?.state ?? 'Idle';
+    const absoluteDrift = Math.abs(state.driftMs);
+    const { softCorrectionThresholdMs, hardSeekThresholdMs } =
+      this.config.settings.syncPlay;
+    let status: SyncPlayRoomCheck['status'] = 'idle';
+    let message = 'Choose something to watch together to begin the room check.';
+
+    if (this.roomCheckInFlight) {
+      status = 'checking';
+      message = 'Measuring the server clock, local player, and shared timeline…';
+    } else if (state.membership !== 'joined' || !state.currentGroup) {
+      message = 'Join a SyncPlay room to check playback readiness.';
+    } else if (!hasQueue) {
+      message = 'The room is connected and waiting for something to play.';
+    } else if (player.status === 'error') {
+      status = 'degraded';
+      message = player.error ?? 'MPV could not prepare the shared item.';
+    } else if (!localReady) {
+      status = 'waiting';
+      message = itemMatched
+        ? 'This player is still loading or buffering the shared item.'
+        : 'This player has not loaded the room’s current item yet.';
+    } else if (serverState === 'Waiting') {
+      status = 'waiting';
+      message = 'This player is ready; Jellyfin is waiting for at least one room participant.';
+    } else if (!timelineAvailable) {
+      status = 'ready';
+      message = 'The item is ready. Timeline measurement begins with the next room command.';
+    } else if (absoluteDrift >= hardSeekThresholdMs) {
+      status = 'degraded';
+      message = `Playback is ${Math.round(absoluteDrift)} ms from the shared timeline and needs a precise seek.`;
+    } else if (
+      absoluteDrift >= softCorrectionThresholdMs ||
+      this.speedResetTimer !== null
+    ) {
+      status = 'correcting';
+      message = `Playback is ${Math.round(absoluteDrift)} ms from the shared timeline; gentle correction is active.`;
+    } else if (
+      state.roundTripMs > 500 ||
+      previous.clockJitterMs > 100
+    ) {
+      status = 'degraded';
+      message = 'Playback is aligned, but network latency is unstable.';
+    } else {
+      status = 'ready';
+      message = 'This player is loaded and aligned with the shared timeline.';
+    }
+
+    return {
+      ...previous,
+      status,
+      localReady,
+      itemMatched,
+      timelineAvailable,
+      playerStatus: player.status,
+      serverState,
+      message
+    };
+  }
+
+  private refreshRoomCheck(): void {
+    const current = this.stateValue.roomCheck;
+    const next = this.deriveRoomCheck(this.stateValue);
+    if (
+      current.status === next.status &&
+      current.localReady === next.localReady &&
+      current.itemMatched === next.itemMatched &&
+      current.timelineAvailable === next.timelineAvailable &&
+      current.playerStatus === next.playerStatus &&
+      current.serverState === next.serverState &&
+      current.message === next.message
+    ) {
+      return;
+    }
+    this.setState({
+      ...this.stateValue,
+      roomCheck: next
+    });
+  }
+
+  private recordCorrection(
+    kind: SyncPlayRoomCheck['lastCorrectionKind'],
+    driftMs: number
+  ): void {
+    this.setState({
+      ...this.stateValue,
+      roomCheck: {
+        ...this.stateValue.roomCheck,
+        automaticCorrections:
+          this.stateValue.roomCheck.automaticCorrections + 1,
+        lastCorrectionMs: driftMs,
+        lastCorrectionKind: kind
+      }
     });
   }
 
@@ -1188,6 +1405,7 @@ export class SyncPlayService {
       this.suppressNativeControlRelay('seek', 1_500, null, expectedSeconds);
       void this.playback.seekLocal(expectedSeconds).then(() => {
         if (generation === this.commandGeneration) {
+          this.recordCorrection('seek', driftMs);
           this.publishMeasuredDrift(true);
         }
       }).catch((error) => {
@@ -1198,13 +1416,13 @@ export class SyncPlayService {
     }, 750);
   }
 
-  private async correctOngoingDrift(): Promise<void> {
+  private async correctOngoingDrift(force = false): Promise<void> {
     if (
       this.driftCorrectionInFlight ||
       this.stateValue.membership !== 'joined' ||
-      this.mpv.state.paused ||
+      (!force && this.mpv.state.paused) ||
       !this.playerReadyForCurrentQueue() ||
-      Date.now() - this.lastAutomaticCorrectionAt < 2_000
+      (!force && Date.now() - this.lastAutomaticCorrectionAt < 2_000)
     ) {
       return;
     }
@@ -1214,15 +1432,41 @@ export class SyncPlayService {
     const expectedSeconds = anchor.positionSeconds +
       Math.max(0, now - anchor.localTargetMs) / 1000;
     const driftMs = (this.mpv.state.positionSeconds - expectedSeconds) * 1000;
-    if (Math.abs(driftMs) < this.config.settings.syncPlay.hardSeekThresholdMs) {
+    const {
+      softCorrectionThresholdMs,
+      hardSeekThresholdMs
+    } = this.config.settings.syncPlay;
+    const absoluteDrift = Math.abs(driftMs);
+    if (absoluteDrift < softCorrectionThresholdMs) {
+      return;
+    }
+    if (!force && this.speedResetTimer && absoluteDrift < hardSeekThresholdMs) {
       return;
     }
     this.driftCorrectionInFlight = true;
     this.lastAutomaticCorrectionAt = now;
-    this.suppressNativeControlRelay('seek', 1_500, null, expectedSeconds);
     try {
-      await this.playback.seekLocal(expectedSeconds);
-      this.publishMeasuredDrift(true);
+      if (
+        absoluteDrift >= hardSeekThresholdMs ||
+        this.mpv.state.paused
+      ) {
+        this.suppressNativeControlRelay('seek', 1_500, null, expectedSeconds);
+        await this.playback.seekLocal(expectedSeconds);
+        this.recordCorrection('seek', driftMs);
+        this.publishMeasuredDrift(true);
+      } else {
+        const correctionRate = absoluteDrift >= 250 ? 0.03 : 0.02;
+        await this.mpv.setSpeed(
+          driftMs > 0 ? 1 - correctionRate : 1 + correctionRate
+        );
+        this.recordCorrection('speed', driftMs);
+        this.scheduleSpeedReset(
+          Math.min(
+            8_000,
+            Math.max(1_000, absoluteDrift / correctionRate)
+          )
+        );
+      }
     } catch (error) {
       this.warnRecoverable(
         userFacingError(error, 'Could not restore the shared playback position.')

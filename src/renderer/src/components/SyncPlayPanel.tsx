@@ -1,9 +1,14 @@
 import {
+  Activity,
+  CheckCircle2,
+  Clock3,
   DoorOpen,
+  Gauge,
   LoaderCircle,
   Plus,
   RefreshCw,
   Radio,
+  TriangleAlert,
   Users,
   X
 } from 'lucide-react';
@@ -20,6 +25,93 @@ interface Props {
   onChange(value: SyncPlayState): void;
   onNotice(message: string): void;
 }
+
+const roomCheckLabels = {
+  idle: 'Waiting for playback',
+  checking: 'Checking the room',
+  ready: 'Ready and aligned',
+  waiting: 'Waiting',
+  correcting: 'Correcting drift',
+  degraded: 'Needs attention'
+} as const;
+
+function signedMilliseconds(value: number): string {
+  return `${value > 0 ? '+' : ''}${value.toFixed(0)} ms`;
+}
+
+interface RoomCheckProps {
+  state: SyncPlayState;
+  busy: boolean;
+  onCheck(): void;
+}
+
+function RoomCheck({ state, busy, onCheck }: RoomCheckProps) {
+  const check = state.roomCheck;
+  const statusIcon = check.status === 'ready'
+    ? <CheckCircle2 />
+    : check.status === 'degraded'
+      ? <TriangleAlert />
+      : <Activity className={check.status === 'checking' ? 'spin' : ''} />;
+  const correction = check.automaticCorrections > 0
+    ? `${check.automaticCorrections} automatic · ${check.lastCorrectionKind}`
+    : 'No corrections needed';
+
+  return (
+    <section className={`room-check room-check--${check.status}`}>
+      <header className="room-check__header">
+        <span className="room-check__icon">{statusIcon}</span>
+        <div>
+          <small>ROOM CHECK</small>
+          <strong>{roomCheckLabels[check.status]}</strong>
+        </div>
+        <i aria-hidden="true" />
+      </header>
+      <p>{check.message}</p>
+      <div className="room-check__grid">
+        <span>
+          <CheckCircle2 />
+          <small>LOCAL PLAYER</small>
+          <strong>{check.localReady ? 'Ready' : check.playerStatus}</strong>
+          <em>{check.itemMatched ? 'Room item loaded' : 'Waiting for room item'}</em>
+        </span>
+        <span>
+          <Users />
+          <small>ROOM SIGNAL</small>
+          <strong>{check.serverState}</strong>
+          <em>{state.currentGroup?.participants.length ?? 0} connected</em>
+        </span>
+        <span>
+          <Gauge />
+          <small>PLAYBACK DRIFT</small>
+          <strong>{check.timelineAvailable ? signedMilliseconds(state.driftMs) : 'Awaiting timeline'}</strong>
+          <em>{correction}</em>
+        </span>
+        <span>
+          <Clock3 />
+          <small>SERVER CLOCK</small>
+          <strong>{state.roundTripMs.toFixed(0)} ms round trip</strong>
+          <em>{signedMilliseconds(state.clockOffsetMs)} offset · {check.clockJitterMs.toFixed(0)} ms jitter</em>
+        </span>
+      </div>
+      {check.lastCorrectionMs !== null ? (
+        <div className="room-check__last-correction">
+          Last correction: {check.lastCorrectionKind} at {signedMilliseconds(check.lastCorrectionMs)}
+        </div>
+      ) : null}
+      <button
+        className="button button--glass button--wide room-check__action"
+        onClick={onCheck}
+        disabled={busy || check.status === 'checking'}
+      >
+        <Activity /> {check.status === 'checking' ? 'Checking…' : 'Run Room Check'}
+      </button>
+      <small className="room-check__note">
+        Jellyfin provides a shared room signal. Participant names show who is connected, not an individual readiness score.
+      </small>
+    </section>
+  );
+}
+
 export function SyncPlayPanel({
   state,
   onClose,
@@ -89,6 +181,17 @@ export function SyncPlayPanel({
     }
   };
 
+  const checkRoom = async () => {
+    setBusy(true);
+    try {
+      onChange(await window.jellyClient.checkSyncPlayRoom());
+    } catch (error) {
+      onNotice(friendlyError(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <aside className="side-panel">
       <header className="side-panel__header">
@@ -112,13 +215,7 @@ export function SyncPlayPanel({
               <span key={name}><i>{name.slice(0, 1)}</i>{name}</span>
             ))}
           </div>
-          <div className="clock-readout">
-            <span>Clock offset <strong>{state.clockOffsetMs.toFixed(1)} ms</strong></span>
-            <span>Round trip <strong>{state.roundTripMs.toFixed(1)} ms</strong></span>
-            <span title="MPV playback timeline compared with the shared room clock">
-              Playback offset <strong>{state.driftMs.toFixed(1)} ms</strong>
-            </span>
-          </div>
+          <RoomCheck state={state} busy={busy} onCheck={checkRoom} />
           <button className="button button--glass button--wide" onClick={resync} disabled={busy}>
             <RefreshCw /> Resync player
           </button>

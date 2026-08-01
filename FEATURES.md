@@ -82,13 +82,19 @@ library data and stream negotiation, then opens playback in MPV.
 - Coordinate play, pause, seek, buffering, media changes, and segment skips.
 - Relay pause and seek controls used inside the fullscreen MPV window through
   the active group.
-- Correct small timing drift while retaining hard correction for larger drift.
+- Correct small timing drift gently with temporary speed adjustment while
+  retaining exact seeks for larger offsets.
 - Recover from slow MPV loads and superseded rapid commands without leaving
   and rejoining the group.
+- Run a Room Check that reports the local item and player state, Jellyfin's
+  shared room state, playback drift, server round trip, clock offset and
+  jitter, plus the recent automatic correction history.
+- Re-sample the Jellyfin server clock while a room remains joined and filter
+  inconsistent network samples before updating the playback timeline.
 - Request a clean room resynchronization if a client or network interruption
   leaves the local timeline behind.
-- Continue measuring drift during playback and correct large offsets that
-  develop after the initial start sequence.
+- Continue measuring drift during playback and correct both small and large
+  offsets that develop after the initial start sequence.
 
 ## Remote control and recovery
 

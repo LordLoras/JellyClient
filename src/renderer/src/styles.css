@@ -2554,28 +2554,173 @@ svg {
   font-style: normal;
 }
 
-.clock-readout {
+.room-check {
+  --room-check-color: var(--quiet);
+  position: relative;
   display: grid;
-  margin: 0 0 24px;
-  padding: 14px;
-  gap: 8px;
+  margin: 0 0 14px;
+  padding: 15px;
+  gap: 12px;
+  overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.16);
+  border-radius: 13px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--room-check-color) 7%, transparent), transparent 42%),
+    rgba(0, 0, 0, 0.2);
   text-align: left;
 }
 
-.clock-readout span {
-  display: flex;
-  justify-content: space-between;
-  color: var(--quiet);
-  font-size: 8px;
+.room-check--ready {
+  --room-check-color: var(--signal);
 }
 
-.clock-readout strong {
+.room-check--checking,
+.room-check--correcting {
+  --room-check-color: var(--cyan);
+}
+
+.room-check--waiting {
+  --room-check-color: #ffd37a;
+}
+
+.room-check--degraded {
+  --room-check-color: #ff8a77;
+}
+
+.room-check::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 2px;
+  content: "";
+  background: var(--room-check-color);
+  opacity: 0.82;
+}
+
+.room-check__header {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+}
+
+.room-check__icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  color: var(--room-check-color);
+  border: 1px solid color-mix(in srgb, var(--room-check-color) 25%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--room-check-color) 7%, transparent);
+  place-items: center;
+}
+
+.room-check__icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.room-check__header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.room-check__header small,
+.room-check__grid small {
+  color: var(--quiet);
+  font-size: 6px;
+  font-weight: 750;
+  letter-spacing: 0.11em;
+}
+
+.room-check__header strong {
+  color: var(--room-check-color);
+  font-size: 11px;
+}
+
+.room-check__header > i {
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--room-check-color);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--room-check-color) 75%, transparent);
+}
+
+.room-check > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.55;
+}
+
+.room-check__grid {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.room-check__grid > span {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 68px;
+  padding: 9px;
+  gap: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(238, 246, 239, 0.07);
+  border-radius: 9px;
+  background: rgba(238, 246, 239, 0.025);
+}
+
+.room-check__grid > span > svg {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 12px;
+  height: 12px;
+  color: var(--room-check-color);
+  opacity: 0.75;
+}
+
+.room-check__grid strong,
+.room-check__grid em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-check__grid strong {
+  padding-right: 12px;
   color: var(--paper);
-  font-weight: 650;
+  font-size: 9px;
   font-variant-numeric: tabular-nums;
+}
+
+.room-check__grid em {
+  color: var(--quiet);
+  font-size: 7px;
+  font-style: normal;
+}
+
+.room-check__last-correction {
+  padding: 7px 8px;
+  color: var(--muted);
+  border-left: 2px solid var(--room-check-color);
+  background: color-mix(in srgb, var(--room-check-color) 4%, transparent);
+  font-size: 7px;
+  font-variant-numeric: tabular-nums;
+}
+
+.room-check__action.button {
+  min-height: 39px;
+}
+
+.room-check__note {
+  color: var(--quiet);
+  font-size: 6px;
+  line-height: 1.5;
 }
 
 .create-room {
@@ -4509,16 +4654,20 @@ svg {
 }
 
 .media-card__menu-popover {
-  position: absolute;
-  right: 0;
-  top: 40px;
-  width: max-content;
-  min-width: 210px;
+  position: fixed;
+  z-index: 280;
   padding: 6px;
   border: 1px solid rgba(255, 255, 255, 0.13);
   border-radius: 12px;
   background: rgba(10, 13, 13, 0.98);
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(18px);
+  animation: card-menu-in 140ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+@keyframes card-menu-in {
+  from { opacity: 0; transform: translateY(-5px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .media-card__menu-popover button {

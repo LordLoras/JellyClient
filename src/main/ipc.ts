@@ -339,6 +339,7 @@ export function registerIpc(services: Services): () => void {
     return syncPlay.action(syncPlayActionSchema.parse(raw));
   });
   handle('syncplay:resync', async () => syncPlay.resync());
+  handle('syncplay:check-room', async () => syncPlay.checkRoom());
 
   const unsubscribe = events.onClient((event) => {
     for (const window of BrowserWindow.getAllWindows()) {

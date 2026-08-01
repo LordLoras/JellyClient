@@ -606,9 +606,18 @@ test('shows Windows library-management views and card actions', async () => {
   await expect(page.getByText('Recommended Movie')).toBeVisible();
 
   await page.getByRole('button', { name: 'More actions for Paused Episode' }).click();
+  const cardMenu = page.getByRole('menu');
   await expect(page.getByRole('menuitem', { name: 'Restart' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Add to My List' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Mark watched' })).toBeVisible();
+  const menuBounds = await cardMenu.boundingBox();
+  const viewportWidth = await page.evaluate(() => window.innerWidth);
+  expect(menuBounds).not.toBeNull();
+  expect(menuBounds!.x).toBeGreaterThanOrEqual(7);
+  expect(menuBounds!.x + menuBounds!.width).toBeLessThanOrEqual(viewportWidth - 7);
+  await cardMenu.screenshot({
+    path: resolve('artifacts', 'card-action-menu.png')
+  });
 
   await page.getByRole('button', { name: 'Playlists' }).click();
   await expect(page.getByRole('heading', { name: 'Playlists' })).toBeVisible();

@@ -424,6 +424,29 @@ export interface SyncPlayGroup {
   participants: string[];
 }
 
+export type SyncPlayRoomCheckStatus =
+  | 'idle'
+  | 'checking'
+  | 'ready'
+  | 'waiting'
+  | 'correcting'
+  | 'degraded';
+
+export interface SyncPlayRoomCheck {
+  status: SyncPlayRoomCheckStatus;
+  localReady: boolean;
+  itemMatched: boolean;
+  timelineAvailable: boolean;
+  playerStatus: PlaybackStatus;
+  serverState: string;
+  clockJitterMs: number;
+  automaticCorrections: number;
+  lastCorrectionMs: number | null;
+  lastCorrectionKind: 'none' | 'speed' | 'seek';
+  checkedAt: string | null;
+  message: string;
+}
+
 export interface SyncPlayState {
   membership: 'not-joined' | 'joining' | 'joined' | 'leaving' | 'error';
   currentGroup: SyncPlayGroup | null;
@@ -433,6 +456,7 @@ export interface SyncPlayState {
   clockOffsetMs: number;
   roundTripMs: number;
   driftMs: number;
+  roomCheck: SyncPlayRoomCheck;
   error: string | null;
 }
 
@@ -547,5 +571,6 @@ export interface JellyClientApi {
       | { type: 'seek'; positionTicks: number }
   ): Promise<SyncPlayState>;
   resyncSyncPlay(): Promise<SyncPlayState>;
+  checkSyncPlayRoom(): Promise<SyncPlayState>;
   subscribe(listener: (event: ClientEvent) => void): () => void;
 }
