@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.4.0 — 2026-08-01
+
+- Add text-subtitle scaling from 50–200%, named presets, 1% adjustment,
+  selectable text colors, shadow strength, and an in-app preview. Saved
+  appearance settings are passed directly to MPV.
+- Add a SyncPlay Room Check for local player readiness, the shared Jellyfin
+  room state, playback drift, server round trip, clock offset, clock jitter,
+  and automatic correction history.
+- Re-sample and filter the Jellyfin server clock while a SyncPlay room remains
+  joined. Smaller ongoing drift now uses temporary speed adjustment, while
+  larger offsets retain exact seek correction.
+- Keep card action menus inside the application viewport, including cards near
+  the left edge and cards inside clipped poster containers.
+- Expand automated coverage to 116 unit tests and retain 15 packaged-app
+  workflows, including real Electron and MPV playback interaction.
+
 ## 1.3.0 — 2026-08-01
 
 - Center the native MPV Skip Intro and Skip Ending prompt and add a visible
