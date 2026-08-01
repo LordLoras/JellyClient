@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { ItemsPage } from '@shared/contracts.js';
-import { useAppStore } from './store';
+import type { HomePayload, ItemsPage, MediaItem } from '@shared/contracts.js';
+import { playableHero, useAppStore } from './store';
 
 const firstPage: ItemsPage = {
   items: [],
@@ -40,5 +40,23 @@ describe('renderer navigation history', () => {
 
     expect(useAppStore.getState().navigationHistory).toHaveLength(0);
     expect(useAppStore.getState().goBack()).toBe(false);
+  });
+});
+
+describe('home hero selection', () => {
+  it('does not promote a series hidden from Up Next', () => {
+    const hidden = { id: 'episode-1', seriesId: 'series-1' } as MediaItem;
+    const visible = { id: 'episode-2', seriesId: 'series-2' } as MediaItem;
+    const home = {
+      libraries: [],
+      resume: [],
+      nextUp: [hidden, visible],
+      favorites: [],
+      recentlyPlayed: [],
+      recommended: [],
+      latest: []
+    } satisfies HomePayload;
+
+    expect(playableHero(home, ['series-1'])?.id).toBe('episode-2');
   });
 });

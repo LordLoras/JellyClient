@@ -176,10 +176,14 @@ function sameView(left: MainView, right: MainView): boolean {
   return true;
 }
 
-export function playableHero(home: HomePayload | null): MediaItem | null {
+export function playableHero(
+  home: HomePayload | null,
+  dismissedNextUpSeriesIds: readonly string[] = []
+): MediaItem | null {
+  const hidden = new Set(dismissedNextUpSeriesIds);
   return (
     home?.resume[0] ??
-    home?.nextUp[0] ??
+    home?.nextUp.find((item) => !hidden.has(item.seriesId ?? item.id)) ??
     home?.latest.find((item) => item.canPlay) ??
     null
   );

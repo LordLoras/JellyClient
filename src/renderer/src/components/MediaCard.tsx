@@ -91,7 +91,9 @@ export function MediaCard({
         {onDismiss && (
           <button
             className="media-card__dismiss"
-            aria-label={`Remove ${item.name} from Continue Watching`}
+            aria-label={dismissLabel === 'Remove from Continue Watching'
+              ? `Remove ${item.name} from Continue Watching`
+              : `${dismissLabel}: ${title}`}
             title={dismissLabel}
             onClick={() => onDismiss(item)}
           >

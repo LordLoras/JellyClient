@@ -16,6 +16,7 @@ class FakeMpv extends EventEmitter {
 
 function subject() {
   const mpv = new FakeMpv();
+  const settings = structuredClone(defaultSettings);
   const jellyfin = new EventEmitter() as EventEmitter & {
     api: unknown;
   };
@@ -23,7 +24,7 @@ function subject() {
   const playback = new PlaybackService(
     jellyfin as never,
     mpv as never,
-    { settings: structuredClone(defaultSettings) } as never
+    { settings } as never
   );
   const active = {
     generation: 6,
@@ -41,6 +42,8 @@ function subject() {
     segments: [] as SkipSegment[],
     dismissedSegmentIds: new Set<string>(),
     promptSegmentId: null as string | null,
+    promptStartedAtSeconds: null as number | null,
+    promptDurationSeconds: 0,
     nextItem: { id: 'episode-2' } as PlaybackState['nextItem'],
     postPlayCanceled: false,
     playNextRequested: false
@@ -51,7 +54,7 @@ function subject() {
     generation: active.generation,
     status: 'playing'
   };
-  return { active, mpv, playback };
+  return { active, mpv, playback, settings };
 }
 
 describe('PlaybackService end-file handling', () => {
@@ -149,6 +152,60 @@ describe('PlaybackService ending skips', () => {
     expect(seekRequests).toHaveBeenCalledWith({
       itemId: 'episode-1',
       targetSeconds: 99.75
+    });
+  });
+});
+
+describe('PlaybackService segment prompts', () => {
+  it('shows an opening intro immediately with the configured shortcut', () => {
+    const { active, mpv, playback, settings } = subject();
+    settings.player.skipSegmentKey = 'F4';
+    active.segments = [{
+      id: 'intro-1',
+      type: MediaSegmentType.Intro,
+      startTicks: 20_000_000,
+      endTicks: 300_000_000
+    }];
+    mpv.state.positionSeconds = 0;
+
+    mpv.emit('state', mpv.state);
+
+    expect(mpv.setSkipPrompt).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        label: 'Skip Intro',
+        shortcut: 'F4',
+        secondsRemaining: 15,
+        automatic: false
+      })
+    );
+    expect(active.promptSegmentId).toBe('intro-1');
+    expect(playback.state.positionSeconds).toBe(0);
+  });
+
+  it('counts down before automatically skipping instead of skipping immediately', () => {
+    const { active, mpv, playback, settings } = subject();
+    const seekRequests = vi.fn();
+    settings.player.autoSkipIntro = true;
+    playback.on('segment-skip-requested', seekRequests);
+    active.segments = [{
+      id: 'intro-1',
+      type: MediaSegmentType.Intro,
+      startTicks: 0,
+      endTicks: 300_000_000
+    }];
+
+    mpv.state.positionSeconds = 0;
+    mpv.emit('state', mpv.state);
+    expect(seekRequests).not.toHaveBeenCalled();
+    expect(mpv.setSkipPrompt).toHaveBeenLastCalledWith(
+      expect.objectContaining({ automatic: true, secondsRemaining: 15 })
+    );
+
+    mpv.state.positionSeconds = 15;
+    mpv.emit('state', mpv.state);
+    expect(seekRequests).toHaveBeenCalledWith({
+      itemId: 'episode-1',
+      targetSeconds: 30
     });
   });
 });

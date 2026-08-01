@@ -20,7 +20,6 @@ import {
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type FormEvent
@@ -62,6 +61,10 @@ export function App() {
   const [undoProgress, setUndoProgress] = useState<{
     item: MediaItem;
     positionTicks: number;
+  } | null>(null);
+  const [undoNextUp, setUndoNextUp] = useState<{
+    item: MediaItem;
+    seriesId: string;
   } | null>(null);
   const homeRefreshTimer = useRef<number | null>(null);
 
@@ -129,13 +132,22 @@ export function App() {
     };
   }, [connected]);
 
-  const hero = useMemo(() => playableHero(store.home), [store.home]);
+  const hero = playableHero(
+    store.home,
+    store.settings?.home.dismissedNextUpSeriesIds
+  );
 
   useEffect(() => {
     if (!undoProgress) return;
     const timer = window.setTimeout(() => setUndoProgress(null), 10_000);
     return () => window.clearTimeout(timer);
   }, [undoProgress]);
+
+  useEffect(() => {
+    if (!undoNextUp) return;
+    const timer = window.setTimeout(() => setUndoNextUp(null), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [undoNextUp]);
 
   const goBack = useCallback(() => {
     if (discardItem && !discardBusy) {
@@ -289,6 +301,27 @@ export function App() {
       await loadHome(true);
     } catch (error) {
       store.addNotice('error', friendlyError(error));
+    }
+  };
+
+  const dismissNextUp = async (item: MediaItem) => {
+    const seriesId = item.seriesId ?? item.id;
+    const current = useAppStore.getState();
+    if (!current.settings) return;
+    const dismissed = current.settings.home.dismissedNextUpSeriesIds;
+    if (dismissed.includes(seriesId)) return;
+    try {
+      const settings = await window.jellyClient.saveSettings({
+        ...current.settings,
+        home: {
+          ...current.settings.home,
+          dismissedNextUpSeriesIds: [...dismissed, seriesId]
+        }
+      });
+      current.setSettings(settings);
+      setUndoNextUp({ item, seriesId });
+    } catch (error) {
+      current.addNotice('error', friendlyError(error));
     }
   };
 
@@ -507,10 +540,12 @@ export function App() {
               hero={hero}
               sectionOrder={store.settings.home.sectionOrder}
               hiddenSections={store.settings.home.hiddenSections}
+              dismissedNextUpSeriesIds={store.settings.home.dismissedNextUpSeriesIds}
               onOpen={openItem}
               onPlay={play}
               onWatchTogether={watchTogether}
               onDiscardProgress={setDiscardItem}
+              onDismissNextUp={(item) => void dismissNextUp(item)}
               onFavorite={(item) => void updateItemState(item, 'favorite')}
               onPlayed={(item) => void updateItemState(item, 'played')}
               onRestart={(item) => void play(item, {
@@ -686,6 +721,33 @@ export function App() {
         </div>
       )}
 
+      {undoNextUp && (
+        <div className="undo-progress" role="status">
+          <span>
+            <strong>Hidden from Up Next</strong>
+            <small>{undoNextUp.item.seriesName ?? undoNextUp.item.name}</small>
+          </span>
+          <button onClick={() => {
+            const pending = undoNextUp;
+            setUndoNextUp(null);
+            const current = useAppStore.getState();
+            if (!current.settings) return;
+            void window.jellyClient.saveSettings({
+              ...current.settings,
+              home: {
+                ...current.settings.home,
+                dismissedNextUpSeriesIds:
+                  current.settings.home.dismissedNextUpSeriesIds.filter(
+                    (id) => id !== pending.seriesId
+                  )
+              }
+            }).then((settings) => current.setSettings(settings)).catch((error) =>
+              current.addNotice('error', friendlyError(error))
+            );
+          }}>Undo</button>
+        </div>
+      )}
+
       <PlayerDock
         playback={store.playback}
         syncPlay={store.syncPlay}
@@ -705,10 +767,12 @@ function HomeView({
   hero,
   sectionOrder,
   hiddenSections,
+  dismissedNextUpSeriesIds,
   onOpen,
   onPlay,
   onWatchTogether,
   onDiscardProgress,
+  onDismissNextUp,
   onFavorite,
   onPlayed,
   onRestart
@@ -716,10 +780,12 @@ function HomeView({
   hero: MediaItem | null;
   sectionOrder: HomeSectionId[];
   hiddenSections: HomeSectionId[];
+  dismissedNextUpSeriesIds: string[];
   onOpen(item: MediaItem): void;
   onPlay(item: MediaItem): void;
   onWatchTogether(item: MediaItem): void;
   onDiscardProgress(item: MediaItem): void;
+  onDismissNextUp(item: MediaItem): void;
   onFavorite(item: MediaItem): void;
   onPlayed(item: MediaItem): void;
   onRestart(item: MediaItem): void;
@@ -735,7 +801,20 @@ function HomeView({
       case 'resume':
         return <MediaRail key={section} title="Continue watching" items={home.resume} landscape {...railActions} onDismiss={onDiscardProgress} />;
       case 'nextUp':
-        return <MediaRail key={section} title="Up next" items={home.nextUp} landscape presentation="next-up" {...railActions} />;
+        return (
+          <MediaRail
+            key={section}
+            title="Up next"
+            items={home.nextUp.filter(
+              (item) => !dismissedNextUpSeriesIds.includes(item.seriesId ?? item.id)
+            )}
+            landscape
+            presentation="next-up"
+            dismissLabel="Hide from Up Next"
+            onDismiss={onDismissNextUp}
+            {...railActions}
+          />
+        );
       case 'favorites':
         return <MediaRail key={section} title="My List" items={home.favorites} {...railActions} />;
       case 'recentlyPlayed':

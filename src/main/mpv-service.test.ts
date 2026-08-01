@@ -261,4 +261,25 @@ describe('MPV lifecycle events', () => {
     expect(toggle).toHaveBeenCalledOnce();
     expect(seek).toHaveBeenCalledWith(-5);
   });
+
+  it('defines the skip section from the configured dynamic shortcut', async () => {
+    const service = new MpvService(
+      { settings: structuredClone(defaultSettings) } as never,
+      { emitClient: vi.fn() } as never
+    );
+    const internal = service as unknown as {
+      command(command: unknown[]): Promise<unknown>;
+      ensureSkipSection(shortcut: string): Promise<void>;
+    };
+    internal.command = vi.fn(async () => null);
+
+    await internal.ensureSkipSection('K');
+
+    expect(internal.command).toHaveBeenCalledWith([
+      'define-section',
+      'jellyclient-skip',
+      'k script-message jellyclient-skip\nK script-message jellyclient-skip',
+      'force'
+    ]);
+  });
 });

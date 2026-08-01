@@ -36,6 +36,8 @@ export const defaultSettings: AppSettings = {
     audioDelaySeconds: 0,
     autoSkipIntro: false,
     autoSkipOutro: false,
+    skipSegmentKey: 'N',
+    skipPromptDurationSeconds: 15,
     autoPlayNext: true,
     nextEpisodeCountdownSeconds: 10
   },
@@ -54,7 +56,8 @@ export const defaultSettings: AppSettings = {
       'latest',
       'libraries'
     ],
-    hiddenSections: []
+    hiddenSections: [],
+    dismissedNextUpSeriesIds: []
   }
 };
 

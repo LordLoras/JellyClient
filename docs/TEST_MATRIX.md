@@ -301,7 +301,9 @@ generation handling, playback lifecycle guards, audio endpoint parsing,
 Jellyfin remote-command routing, and SyncPlay scheduling and drift correction.
 SyncPlay also runs deterministic randomized rapid-command bursts and verifies
 that only the newest command is applied, the room remains joined, and the
-control queue still works after a transient request failure.
+control queue still works after a transient request failure. Segment coverage
+includes opening-intro detection, delayed automatic skipping, configurable MPV
+bindings, and countdown-overlay rendering.
 
 The Electron test suite runs 15 click-driven workflows against both the source
 app and the packaged Windows executable. It covers sign-in and encrypted

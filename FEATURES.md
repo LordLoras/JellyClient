@@ -18,6 +18,8 @@ library data and stream negotiation, then opens playback in MPV.
 - Mark an item watched or unwatched and add or remove it from favorites.
 - Restart an item from the beginning or remove saved progress from Continue
   Watching, with a short Undo period.
+- Hide an unwanted series from Up Next with Undo, and restore hidden series
+  from Home screen settings.
 - Create playlists and collections, add or remove titles, and reorder playlist
   entries.
 - Open available trailers and special features.
@@ -59,8 +61,12 @@ library data and stream negotiation, then opens playback in MPV.
 - Navigate chapters from the app or with MPV shortcuts.
 - Preview Jellyfin trickplay images while moving over the seek bar when the
   server has generated them.
-- Show Skip Intro and Skip Ending prompts from Jellyfin media segments.
-- Press `N` to skip the active segment or enable automatic segment skipping.
+- Show centered Skip Intro and Skip Ending prompts from Jellyfin media segments
+  with a visible countdown and progress bar.
+- Rebind the segment shortcut to a letter, number, or function key. The prompt
+  displays the active binding.
+- Choose how long prompts remain visible; automatic skipping uses the same
+  countdown instead of skipping without warning.
 - Show a cancelable next-episode countdown after an episode.
 - Press `N` during post-play to start the next episode or `Esc` to cancel it.
 - Configure whether the next episode starts automatically and how long the

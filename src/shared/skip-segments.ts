@@ -21,7 +21,14 @@ export function activeSkipSegment(
   const positionTicks = positionSeconds * TICKS_PER_SECOND;
   return segments.find((segment) =>
     !dismissedIds.has(segment.id) &&
-    positionTicks >= segment.startTicks &&
+    (
+      positionTicks >= segment.startTicks ||
+      (
+        segment.type === 'Intro' &&
+        positionTicks <= 3 * TICKS_PER_SECOND &&
+        segment.startTicks <= 3 * TICKS_PER_SECOND
+      )
+    ) &&
     positionTicks < segment.endTicks - TICKS_PER_SECOND / 4
   ) ?? null;
 }

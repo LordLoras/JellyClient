@@ -61,6 +61,7 @@ export function SettingsPage({
   const [audioDevicesBusy, setAudioDevicesBusy] = useState(false);
   const [audioDevicesError, setAudioDevicesError] = useState<string | null>(null);
   const [displays, setDisplays] = useState<WindowsDisplay[]>([]);
+  const [recordingSkipShortcut, setRecordingSkipShortcut] = useState(false);
   useEffect(() => setDraft(settings), [settings]);
   useEffect(() => {
     let cancelled = false;
@@ -552,6 +553,57 @@ export function SettingsPage({
             </label>
           </div>
           <div className="settings-columns">
+            <div className="field">
+              <span>Skip intro / ending shortcut</span>
+              <button
+                type="button"
+                className={`shortcut-recorder${recordingSkipShortcut ? ' is-recording' : ''}`}
+                aria-label="Skip shortcut"
+                onBlur={() => setRecordingSkipShortcut(false)}
+                onClick={() => setRecordingSkipShortcut(true)}
+                onKeyDown={(event) => {
+                  if (!recordingSkipShortcut) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (event.key === 'Escape') {
+                    setRecordingSkipShortcut(false);
+                    return;
+                  }
+                  const shortcut = normalizeSkipShortcut(event.key);
+                  if (!shortcut) return;
+                  setDraft({
+                    ...draft,
+                    player: { ...draft.player, skipSegmentKey: shortcut }
+                  });
+                  setRecordingSkipShortcut(false);
+                }}
+              >
+                <kbd>{draft.player.skipSegmentKey}</kbd>
+                <span>
+                  <strong>{recordingSkipShortcut ? 'Press a key' : 'Change shortcut'}</strong>
+                  <small>Letter, number, or F1–F12</small>
+                </span>
+              </button>
+            </div>
+            <label className="field">
+              <span>Skip prompt / auto-skip delay</span>
+              <select
+                value={draft.player.skipPromptDurationSeconds}
+                onChange={(event) => setDraft({
+                  ...draft,
+                  player: {
+                    ...draft.player,
+                    skipPromptDurationSeconds: Number(event.target.value)
+                  }
+                })}
+              >
+                {[5, 10, 15, 20, 30].map((seconds) => (
+                  <option key={seconds} value={seconds}>{seconds} seconds</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="settings-columns">
             <label className="field">
               <span>Subtitle delay (seconds)</span>
               <input
@@ -584,7 +636,7 @@ export function SettingsPage({
           <div className="toggle-stack">
             <Toggle
               label="Automatically skip intros"
-              detail="Use intro segments reported by Jellyfin. The N shortcut remains available."
+              detail={`Wait ${draft.player.skipPromptDurationSeconds} seconds, then skip. Press ${draft.player.skipSegmentKey} immediately.`}
               checked={draft.player.autoSkipIntro}
               onChange={(value) => setDraft({
                 ...draft,
@@ -593,7 +645,7 @@ export function SettingsPage({
             />
             <Toggle
               label="Automatically skip endings"
-              detail="Use ending segments reported by Jellyfin."
+              detail={`Wait ${draft.player.skipPromptDurationSeconds} seconds before advancing or seeking.`}
               checked={draft.player.autoSkipOutro}
               onChange={(value) => setDraft({
                 ...draft,
@@ -630,6 +682,22 @@ export function SettingsPage({
               );
             })}
           </div>
+          {draft.home.dismissedNextUpSeriesIds.length > 0 ? (
+            <div className="up-next-hidden-settings">
+              <span>
+                <strong>Hidden from Up Next</strong>
+                <small>{draft.home.dismissedNextUpSeriesIds.length} series hidden on this client</small>
+              </span>
+              <button
+                className="button button--glass"
+                type="button"
+                onClick={() => setDraft({
+                  ...draft,
+                  home: { ...draft.home, dismissedNextUpSeriesIds: [] }
+                })}
+              >Restore all</button>
+            </div>
+          ) : null}
         </section>
 
         <section className="settings-card settings-card--full">
@@ -688,6 +756,12 @@ export function SettingsPage({
       </button>
     </div>
   );
+}
+
+function normalizeSkipShortcut(key: string): string | null {
+  if (/^[a-z0-9]$/i.test(key)) return key.toUpperCase();
+  const functionKey = key.toUpperCase().match(/^F([1-9]|1[0-2])$/);
+  return functionKey ? functionKey[0] : null;
 }
 
 function LanguageSelect({

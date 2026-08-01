@@ -45,13 +45,26 @@ describe('IPC validation', () => {
     delete legacy.player.autoEnableSubtitles;
     delete legacy.player.preferredSubtitleLanguage;
     delete legacy.player.preferredDisplayId;
+    delete legacy.player.skipSegmentKey;
+    delete legacy.player.skipPromptDurationSeconds;
     delete (legacy as Partial<AppSettings>).home;
 
     const migrated = settingsSchema.parse(legacy);
     expect(migrated.player.autoEnableSubtitles).toBe(true);
     expect(migrated.player.preferredSubtitleLanguage).toBe('eng');
     expect(migrated.player.preferredDisplayId).toBe('auto');
+    expect(migrated.player.skipSegmentKey).toBe('N');
+    expect(migrated.player.skipPromptDurationSeconds).toBe(15);
     expect(migrated.home.sectionOrder).toContain('resume');
     expect(migrated.home.hiddenSections).toEqual([]);
+    expect(migrated.home.dismissedNextUpSeriesIds).toEqual([]);
+  });
+
+  it('normalizes and validates the segment shortcut', () => {
+    const settings = structuredClone(defaultSettings);
+    settings.player.skipSegmentKey = 'f4';
+    expect(settingsSchema.parse(settings).player.skipSegmentKey).toBe('F4');
+    settings.player.skipSegmentKey = 'Space';
+    expect(() => settingsSchema.parse(settings)).toThrow();
   });
 });

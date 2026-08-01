@@ -64,6 +64,7 @@ export type HomeSectionId =
 export interface HomeSettings {
   sectionOrder: HomeSectionId[];
   hiddenSections: HomeSectionId[];
+  dismissedNextUpSeriesIds: string[];
 }
 
 export interface ServerProfile {
@@ -134,6 +135,8 @@ export interface PlayerSettings {
   audioDelaySeconds: number;
   autoSkipIntro: boolean;
   autoSkipOutro: boolean;
+  skipSegmentKey: string;
+  skipPromptDurationSeconds: number;
   autoPlayNext: boolean;
   nextEpisodeCountdownSeconds: number;
 }

@@ -141,6 +141,7 @@ const server = createServer(
                 : 'Freshly Added Episode',
             Type: 'Episode',
             SeriesName: 'Fixture Series',
+            SeriesId: 'fixture-series-id',
             ParentIndexNumber: 3,
             IndexNumber: nextEpisodeNumber,
             RunTimeTicks: 3_000_000_000,
@@ -202,7 +203,14 @@ const server = createServer(
       return;
     }
     if (path === '/mediasegments/real-movie') {
-      json(response, { Items: [] });
+      json(response, {
+        Items: [{
+          Id: 'opening-intro',
+          Type: 'Intro',
+          StartTicks: 20_000_000,
+          EndTicks: 170_000_000
+        }]
+      });
       return;
     }
     if (/^\/playingitems\/[^/]+\/(progress|stop)$/i.test(path)) {
@@ -639,6 +647,14 @@ test('can cancel or confirm removing saved progress and keeps Up Next useful', a
   expect(nextUpQuery.has('disableFirstEpisode')).toBe(false);
   expect(nextUpQuery.get('nextUpDateCutoff')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
+  await page.getByRole('button', {
+    name: 'Hide from Up Next: Fixture Series'
+  }).click();
+  await expect(page.getByRole('heading', { name: 'Up next' })).toHaveCount(0);
+  await expect(page.getByText('Hidden from Up Next')).toBeVisible();
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect(page.getByRole('heading', { name: 'Up next' })).toBeVisible();
+
   await removePausedEpisode.click();
   await expect(
     page.getByRole('heading', { name: 'Discard saved progress?' })
@@ -672,6 +688,18 @@ test('saves Windows playback and home-screen settings through the real UI', asyn
   await page.getByRole('checkbox', { name: /Start fullscreen/ }).uncheck();
   await page.getByRole('checkbox', { name: /Automatically skip intros/ }).check();
   await page.getByRole('checkbox', { name: /Automatically skip endings/ }).check();
+  const skipShortcut = page.getByRole('button', { name: 'Skip shortcut' });
+  await skipShortcut.click();
+  await skipShortcut.press('F4');
+  await expect(skipShortcut.locator('kbd')).toHaveText('F4');
+  await page.getByRole('combobox', {
+    name: 'Skip prompt / auto-skip delay'
+  }).selectOption('20');
+  await page.getByRole('heading', { name: 'Playback behavior' }).scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: resolve('artifacts', 'settings-skip-controls.png'),
+    fullPage: true
+  });
   await page.getByLabel('Subtitle delay (seconds)').fill('0.4');
   await page.getByLabel('Audio delay (seconds)').fill('-0.2');
   await page.getByRole('button', { name: 'Hide Recommended' }).click();
@@ -688,6 +716,8 @@ test('saves Windows playback and home-screen settings through the real UI', asyn
       fullscreenOnPlay: boolean;
       autoSkipIntro: boolean;
       autoSkipOutro: boolean;
+      skipSegmentKey: string;
+      skipPromptDurationSeconds: number;
       subtitleDelaySeconds: number;
       audioDelaySeconds: number;
       };
@@ -701,6 +731,8 @@ test('saves Windows playback and home-screen settings through the real UI', asyn
     fullscreenOnPlay: false,
     autoSkipIntro: true,
     autoSkipOutro: true,
+    skipSegmentKey: 'F4',
+    skipPromptDurationSeconds: 20,
     subtitleDelaySeconds: 0.4,
     audioDelaySeconds: -0.2
   });
@@ -715,6 +747,11 @@ test('saves Windows playback and home-screen settings through the real UI', asyn
   await page.getByRole('button', { name: 'Show Recommended' }).click();
   await page.getByRole('combobox', { name: 'HDR behavior' }).selectOption('auto');
   await page.getByRole('combobox', { name: 'Playback speed' }).selectOption('1');
+  await skipShortcut.click();
+  await skipShortcut.press('n');
+  await page.getByRole('combobox', {
+    name: 'Skip prompt / auto-skip delay'
+  }).selectOption('15');
   await page.getByRole('button', { name: 'Save settings' }).click();
   await expect(page.getByText('Playback settings saved.')).toBeVisible();
 });

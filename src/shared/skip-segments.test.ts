@@ -20,6 +20,18 @@ describe('skip segments', () => {
     expect(activeSkipSegment([intro, outro], 40, new Set())).toBeNull();
   });
 
+  it('offers an opening intro immediately when its marker begins a moment later', () => {
+    const openingIntro = validSkipSegment(
+      'opening-intro',
+      'Intro',
+      20_000_000,
+      250_000_000
+    )!;
+    expect(activeSkipSegment([openingIntro], 0, new Set())?.id).toBe(
+      'opening-intro'
+    );
+  });
+
   it('does not reopen a dismissed segment', () => {
     expect(activeSkipSegment([intro], 12, new Set(['intro']))).toBeNull();
   });

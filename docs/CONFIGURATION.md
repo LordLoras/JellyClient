@@ -40,7 +40,9 @@ The Jellyfin password is never written to either file.
         "dtsHd": false
       },
       "alwaysOnTop": false,
-      "fullscreenOnPlay": true
+      "fullscreenOnPlay": true,
+      "skipSegmentKey": "N",
+      "skipPromptDurationSeconds": 15
     },
     "syncPlay": {
       "autoJoinUnambiguousCast": true,
@@ -50,6 +52,10 @@ The Jellyfin password is never written to either file.
   }
 }
 ```
+
+The skip shortcut accepts one letter, one number, or `F1` through `F12` and can
+be recorded in the Settings screen. `skipPromptDurationSeconds` controls both
+the prompt animation and the delay before an enabled automatic skip.
 
 Use the in-app UI for normal changes. It validates ports, paths, enum values,
 and SyncPlay thresholds before replacing the file atomically.

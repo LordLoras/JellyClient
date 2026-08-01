@@ -65,6 +65,11 @@ export const settingsSchema = z.object({
     audioDelaySeconds: z.number().min(-30).max(30).default(0),
     autoSkipIntro: z.boolean().default(false),
     autoSkipOutro: z.boolean().default(false),
+    skipSegmentKey: z.string().trim().toUpperCase().regex(
+      /^(?:[A-Z0-9]|F(?:[1-9]|1[0-2]))$/,
+      'Choose one letter, number, or F1–F12.'
+    ).default('N'),
+    skipPromptDurationSeconds: z.number().int().min(3).max(30).default(15),
     autoPlayNext: z.boolean().default(true),
     nextEpisodeCountdownSeconds: z.number().int().min(3).max(60).default(10)
   }),
@@ -91,7 +96,10 @@ export const settingsSchema = z.object({
       'recommended',
       'latest',
       'libraries'
-    ])).max(7)
+    ])).max(7),
+    dismissedNextUpSeriesIds: z.array(
+      z.string().trim().min(1).max(100)
+    ).max(500).default([])
   }).default({
     sectionOrder: [
       'resume',
@@ -102,7 +110,8 @@ export const settingsSchema = z.object({
       'latest',
       'libraries'
     ],
-    hiddenSections: []
+    hiddenSections: [],
+    dismissedNextUpSeriesIds: []
   })
 });
 

@@ -2898,6 +2898,58 @@ svg {
   border-left: 2px solid var(--cyan);
 }
 
+.shortcut-recorder {
+  width: 100%;
+  height: 43px;
+  padding: 6px 10px;
+  display: grid;
+  grid-template-columns: 54px 1fr;
+  align-items: center;
+  gap: 10px;
+  color: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.2);
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.shortcut-recorder:hover,
+.shortcut-recorder:focus-visible,
+.shortcut-recorder.is-recording {
+  border-color: rgba(220, 255, 86, 0.48);
+  background: rgba(220, 255, 86, 0.055);
+  box-shadow: 0 0 0 3px rgba(220, 255, 86, 0.055);
+}
+
+.shortcut-recorder kbd {
+  min-width: 46px;
+  padding: 7px 8px;
+  color: var(--signal);
+  border: 1px solid rgba(220, 255, 86, 0.34);
+  border-bottom-width: 3px;
+  border-radius: 7px;
+  background: rgba(5, 8, 8, 0.86);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.shortcut-recorder > span {
+  display: grid;
+  gap: 2px;
+}
+
+.shortcut-recorder strong {
+  font-size: 9px;
+}
+
+.shortcut-recorder small {
+  color: var(--quiet);
+  font-size: 7px;
+}
+
 .settings-note--warning {
   padding-left: 11px;
   color: #efc9a5;
@@ -4420,6 +4472,37 @@ svg {
 .home-layout-list strong,
 .home-layout-list small {
   display: block;
+}
+
+.up-next-hidden-settings {
+  margin-top: 14px;
+  padding: 13px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid rgba(220, 255, 86, 0.15);
+  border-radius: 11px;
+  background: linear-gradient(110deg, rgba(220, 255, 86, 0.055), rgba(0, 0, 0, 0.12));
+}
+
+.up-next-hidden-settings > span {
+  display: grid;
+  gap: 3px;
+}
+
+.up-next-hidden-settings strong {
+  font-size: 9px;
+}
+
+.up-next-hidden-settings small {
+  color: var(--quiet);
+  font-size: 8px;
+}
+
+.up-next-hidden-settings .button {
+  min-height: 34px;
+  padding-inline: 13px;
 }
 
 .home-layout-list small {

@@ -30,7 +30,10 @@ import {
 } from './audio-output.js';
 import { ClientEventBus } from './event-bus.js';
 import { userFacingError } from './errors.js';
-import { skipPromptAss } from './mpv-skip-overlay.js';
+import {
+  skipPromptAss,
+  type SkipPromptOverlay
+} from './mpv-skip-overlay.js';
 import { postPlayAss } from './mpv-postplay-overlay.js';
 import {
   MpvPlaybackGenerationTracker,
@@ -124,7 +127,8 @@ export class MpvService extends EventEmitter {
   };
   private intentionalShutdown = false;
   private pendingSubtitlePreference: MpvSubtitlePreference | null = null;
-  private skipPromptLabel: string | null = null;
+  private skipPromptValue: SkipPromptOverlay | null = null;
+  private skipSectionKey: string | null = null;
   private postPlayVisible = false;
   private audioVerificationTimer: NodeJS.Timeout | null = null;
   private readonly playbackGenerations = new MpvPlaybackGenerationTracker();
@@ -461,18 +465,19 @@ export class MpvService extends EventEmitter {
     await this.command(['show-text', message, 1_800]);
   }
 
-  async setSkipPrompt(label: string | null): Promise<void> {
-    if (this.skipPromptLabel === label) return;
-    const previousLabel = this.skipPromptLabel;
-    this.skipPromptLabel = label;
+  async setSkipPrompt(prompt: SkipPromptOverlay | null): Promise<void> {
+    if (sameSkipPrompt(this.skipPromptValue, prompt)) return;
+    const previousPrompt = this.skipPromptValue;
+    this.skipPromptValue = prompt ? { ...prompt } : null;
     try {
       if (!this.socket || this.socket.destroyed) return;
-      if (label) {
+      if (prompt) {
+        await this.ensureSkipSection(prompt.shortcut);
         await this.command([
           'osd-overlay',
           7_101,
           'ass-events',
-          skipPromptAss(label),
+          skipPromptAss(prompt),
           1280,
           720,
           100
@@ -488,9 +493,21 @@ export class MpvService extends EventEmitter {
         ''
       ]);
     } catch (error) {
-      this.skipPromptLabel = previousLabel;
+      this.skipPromptValue = previousPrompt;
       throw error;
     }
+  }
+
+  private async ensureSkipSection(shortcut: string): Promise<void> {
+    const normalized = shortcut.trim().toUpperCase();
+    if (this.skipSectionKey === normalized) return;
+    await this.command([
+      'define-section',
+      'jellyclient-skip',
+      skipShortcutBindings(normalized),
+      'force'
+    ]);
+    this.skipSectionKey = normalized;
   }
 
   async setPostPlayPrompt(
@@ -591,12 +608,7 @@ export class MpvService extends EventEmitter {
       for (const [index, property] of OBSERVED_PROPERTIES.entries()) {
         await this.command(['observe_property', index + 1, property]);
       }
-      await this.command([
-        'define-section',
-        'jellyclient-skip',
-        'n script-message jellyclient-skip\nN script-message jellyclient-skip',
-        'force'
-      ]);
+      await this.ensureSkipSection(this.config.settings.player.skipSegmentKey);
       await this.command([
         'define-section',
         'jellyclient-controls',
@@ -1369,7 +1381,8 @@ export class MpvService extends EventEmitter {
       pending.reject(new Error('MPV IPC disconnected.'));
     }
     this.pending.clear();
-    this.skipPromptLabel = null;
+    this.skipPromptValue = null;
+    this.skipSectionKey = null;
     this.postPlayVisible = false;
     this.playbackGenerations.reset();
   }
@@ -1508,4 +1521,24 @@ function chapterAt(
 function formatSignedSeconds(value: number): string {
   const normalized = Math.abs(value) < 0.005 ? 0 : value;
   return `${normalized > 0 ? '+' : ''}${normalized.toFixed(2)} s`;
+}
+
+function sameSkipPrompt(
+  left: SkipPromptOverlay | null,
+  right: SkipPromptOverlay | null
+): boolean {
+  return left?.label === right?.label &&
+    left?.shortcut === right?.shortcut &&
+    left?.secondsRemaining === right?.secondsRemaining &&
+    left?.totalSeconds === right?.totalSeconds &&
+    left?.automatic === right?.automatic;
+}
+
+function skipShortcutBindings(shortcut: string): string {
+  const keys = /^[A-Z]$/.test(shortcut)
+    ? [shortcut.toLowerCase(), shortcut]
+    : [shortcut];
+  return keys
+    .map((key) => `${key} script-message jellyclient-skip`)
+    .join('\n');
 }

@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.3.0 — 2026-08-01
+
+- Center the native MPV Skip Intro and Skip Ending prompt and add a visible
+  countdown with a shrinking fifteen-second progress bar.
+- Allow the skip shortcut to be rebound to a letter, number, or function key;
+  the active key is shown directly in the prompt.
+- Delay automatic intro and ending skips by the configured prompt duration and
+  display the remaining time instead of skipping without warning.
+- Detect opening intro markers immediately, including markers that begin in
+  the first few seconds of an episode.
+- Allow an Up Next series to be hidden on this client with Undo, and restore
+  all hidden series from Home screen settings.
+- Expand automated coverage to 109 unit tests while retaining 15 packaged-app
+  click workflows, including an opening intro rendered through real MPV.
+
 ## 1.2.0 — 2026-08-01
 
 - Add configurable home rows for Continue Watching, Up Next, My List,
