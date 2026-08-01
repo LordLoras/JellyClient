@@ -2101,6 +2101,61 @@ svg {
   backdrop-filter: blur(10px);
 }
 
+.detail-sheet__back {
+  position: sticky;
+  z-index: 5;
+  top: 18px;
+  left: 18px;
+  display: inline-flex;
+  max-width: min(310px, calc(100% - 100px));
+  min-height: 42px;
+  margin: 18px 0 -60px 18px;
+  padding: 7px 12px 7px 9px;
+  gap: 9px;
+  align-items: center;
+  overflow: hidden;
+  color: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: rgba(8, 10, 11, 0.78);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(14px);
+  text-align: left;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.detail-sheet__back:hover,
+.detail-sheet__back:focus-visible {
+  border-color: rgba(220, 255, 86, 0.34);
+  background: rgba(18, 22, 20, 0.92);
+}
+
+.detail-sheet__back > svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  color: var(--signal);
+}
+
+.detail-sheet__back > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.detail-sheet__back small {
+  color: var(--quiet);
+  font-size: 6px;
+  letter-spacing: 0.11em;
+}
+
+.detail-sheet__back strong {
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .detail-sheet__visual {
   position: absolute;
   top: 0;
@@ -2964,12 +3019,18 @@ svg {
 
 .toggle {
   display: flex;
+  width: 100%;
   min-height: 63px;
+  padding: 0;
   gap: 15px;
   align-items: center;
   justify-content: space-between;
+  color: var(--paper);
   border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
   cursor: pointer;
+  text-align: left;
 }
 
 .toggle > span {
@@ -2986,9 +3047,9 @@ svg {
   font-size: 8px;
 }
 
-.toggle input {
-  position: absolute;
-  opacity: 0;
+.toggle:hover > span strong,
+.toggle:focus-visible > span strong {
+  color: var(--signal);
 }
 
 .toggle > i {
@@ -3014,12 +3075,12 @@ svg {
   transition: 160ms ease;
 }
 
-.toggle input:checked + i {
+.toggle[aria-checked="true"] > i {
   border-color: var(--signal);
   background: var(--signal);
 }
 
-.toggle input:checked + i::after {
+.toggle[aria-checked="true"] > i::after {
   left: 19px;
   background: var(--signal-ink);
 }
@@ -3554,20 +3615,18 @@ svg {
 .codec-toggle {
   position: relative;
   display: grid;
+  width: 100%;
   min-height: 76px;
   padding: 13px;
   gap: 10px;
   align-items: end;
   border: 1px solid var(--line);
   border-radius: 11px;
+  color: var(--paper);
   background: rgba(0, 0, 0, 0.16);
   cursor: pointer;
+  text-align: left;
   transition: border-color 160ms ease, background 160ms ease;
-}
-
-.codec-toggle input {
-  position: absolute;
-  opacity: 0;
 }
 
 .codec-toggle > span {

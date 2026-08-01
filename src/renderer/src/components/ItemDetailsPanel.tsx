@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   ArrowDown,
   ArrowUp,
   Clock3,
@@ -25,6 +26,8 @@ import { MediaFormatBadges } from './MediaFormatBadges';
 interface Props {
   item: ItemDetails;
   syncPlay: SyncPlayState;
+  backLabel: string | null;
+  onBack(): void;
   onClose(): void;
   onPlay(input: PlayMediaInput): void;
   onWatchTogether(): void;
@@ -41,6 +44,8 @@ interface Props {
 export function ItemDetailsPanel({
   item,
   syncPlay,
+  backLabel,
+  onBack,
   onClose,
   onPlay,
   onWatchTogether,
@@ -66,6 +71,9 @@ export function ItemDetailsPanel({
   const [updating, setUpdating] = useState(false);
   const source = item.playbackSources.find((candidate) => candidate.id === sourceId) ??
     initialSource;
+  const secondaryTitle = [item.indexLabel, item.name]
+    .filter(Boolean)
+    .join(' · ');
 
   useEffect(() => {
     setSourceId(initialSource?.id ?? '');
@@ -105,7 +113,19 @@ export function ItemDetailsPanel({
         aria-modal="true"
         role="dialog"
       >
-        <button className="icon-button detail-sheet__close" onClick={onClose} aria-label="Close">
+        {backLabel ? (
+          <button
+            className="detail-sheet__back"
+            type="button"
+            onClick={onBack}
+            aria-label={`Back to ${backLabel}`}
+            title={`Back to ${backLabel}`}
+          >
+            <ArrowLeft />
+            <span><small>BACK TO</small><strong>{backLabel}</strong></span>
+          </button>
+        ) : null}
+        <button type="button" className="icon-button detail-sheet__close" onClick={onClose} aria-label="Close">
           <X />
         </button>
         <div className="detail-sheet__visual">
@@ -115,7 +135,7 @@ export function ItemDetailsPanel({
         <div className="detail-sheet__body">
           <p className="eyebrow">{item.type.toUpperCase()}</p>
           <h1>{item.seriesName ?? item.name}</h1>
-          {item.seriesName && <h2>{item.indexLabel} · {item.name}</h2>}
+          {item.seriesName && <h2>{secondaryTitle}</h2>}
           <div className="detail-sheet__facts">
             {item.productionYear && <span>{item.productionYear}</span>}
             {item.officialRating && <span className="rating-chip">{item.officialRating}</span>}

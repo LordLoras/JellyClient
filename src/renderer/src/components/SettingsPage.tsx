@@ -65,6 +65,26 @@ export function SettingsPage({
   const [audioDevicesError, setAudioDevicesError] = useState<string | null>(null);
   const [displays, setDisplays] = useState<WindowsDisplay[]>([]);
   const [recordingSkipShortcut, setRecordingSkipShortcut] = useState(false);
+  const updatePlayer = (patch: Partial<PlayerSettings>) => {
+    setDraft((current) => ({
+      ...current,
+      player: { ...current.player, ...patch }
+    }));
+  };
+  const updateAudioPassthrough = (
+    patch: Partial<PlayerSettings['audioPassthrough']>
+  ) => {
+    setDraft((current) => ({
+      ...current,
+      player: {
+        ...current.player,
+        audioPassthrough: {
+          ...current.player.audioPassthrough,
+          ...patch
+        }
+      }
+    }));
+  };
   useEffect(() => setDraft(settings), [settings]);
   useEffect(() => {
     let cancelled = false;
@@ -149,19 +169,23 @@ export function SettingsPage({
   };
 
   const moveHomeSection = (id: HomeSectionId, direction: -1 | 1) => {
-    const order = [...draft.home.sectionOrder];
-    const index = order.indexOf(id);
-    const target = index + direction;
-    if (index < 0 || target < 0 || target >= order.length) return;
-    [order[index], order[target]] = [order[target]!, order[index]!];
-    setDraft({ ...draft, home: { ...draft.home, sectionOrder: order } });
+    setDraft((current) => {
+      const order = [...current.home.sectionOrder];
+      const index = order.indexOf(id);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= order.length) return current;
+      [order[index], order[target]] = [order[target]!, order[index]!];
+      return { ...current, home: { ...current.home, sectionOrder: order } };
+    });
   };
 
   const toggleHomeSection = (id: HomeSectionId) => {
-    const hidden = draft.home.hiddenSections.includes(id)
-      ? draft.home.hiddenSections.filter((candidate) => candidate !== id)
-      : [...draft.home.hiddenSections, id];
-    setDraft({ ...draft, home: { ...draft.home, hiddenSections: hidden } });
+    setDraft((current) => {
+      const hidden = current.home.hiddenSections.includes(id)
+        ? current.home.hiddenSections.filter((candidate) => candidate !== id)
+        : [...current.home.hiddenSections, id];
+      return { ...current, home: { ...current.home, hiddenSections: hidden } };
+    });
   };
 
   return (
@@ -189,7 +213,7 @@ export function SettingsPage({
                 })}
                 placeholder="Select mpv.exe"
               />
-              <button className="button button--glass" onClick={chooseMpv}>
+              <button type="button" className="button button--glass" onClick={chooseMpv}>
                 <FolderOpen /> Browse
               </button>
             </div>
@@ -259,28 +283,19 @@ export function SettingsPage({
               label="Hardware decoding"
               detail="Use auto-safe hardware decoding."
               checked={draft.player.hardwareDecoding}
-              onChange={(value) => setDraft({
-                ...draft,
-                player: { ...draft.player, hardwareDecoding: value }
-              })}
+              onChange={(value) => updatePlayer({ hardwareDecoding: value })}
             />
             <Toggle
               label="Start fullscreen"
               detail="Open the separate MPV window fullscreen on the TV."
               checked={draft.player.fullscreenOnPlay}
-              onChange={(value) => setDraft({
-                ...draft,
-                player: { ...draft.player, fullscreenOnPlay: value }
-              })}
+              onChange={(value) => updatePlayer({ fullscreenOnPlay: value })}
             />
             <Toggle
               label="Always on top"
               detail="Keep the player above the catalog window."
               checked={draft.player.alwaysOnTop}
-              onChange={(value) => setDraft({
-                ...draft,
-                player: { ...draft.player, alwaysOnTop: value }
-              })}
+              onChange={(value) => updatePlayer({ alwaysOnTop: value })}
             />
           </div>
         </section>
@@ -296,7 +311,7 @@ export function SettingsPage({
             here. Passwords never do. A Windows-encrypted token is stored beside
             this file when “Remember session” is enabled.
           </p>
-          <button className="button button--glass button--wide" onClick={() => window.jellyClient.openConfigFolder()}>
+          <button type="button" className="button button--glass button--wide" onClick={() => window.jellyClient.openConfigFolder()}>
             <FolderOpen /> Open configuration folder
           </button>
         </section>
@@ -320,10 +335,7 @@ export function SettingsPage({
             label="Automatically enable subtitles"
             detail="Choose the preferred language when playback starts."
             checked={draft.player.autoEnableSubtitles}
-            onChange={(value) => setDraft({
-              ...draft,
-              player: { ...draft.player, autoEnableSubtitles: value }
-            })}
+            onChange={(value) => updatePlayer({ autoEnableSubtitles: value })}
           />
           <label className="field">
             <span>Preferred language</span>
@@ -343,28 +355,19 @@ export function SettingsPage({
             label="Prefer forced subtitles"
             detail="Choose a matching forced track when one is available."
             checked={draft.player.preferForcedSubtitles}
-            onChange={(value) => setDraft({
-              ...draft,
-              player: { ...draft.player, preferForcedSubtitles: value }
-            })}
+            onChange={(value) => updatePlayer({ preferForcedSubtitles: value })}
           />
           <Toggle
             label="Avoid SDH subtitles"
             detail="Prefer a standard subtitle track over SDH or closed captions."
             checked={draft.player.avoidSdhSubtitles}
-            onChange={(value) => setDraft({
-              ...draft,
-              player: { ...draft.player, avoidSdhSubtitles: value }
-            })}
+            onChange={(value) => updatePlayer({ avoidSdhSubtitles: value })}
           />
           <Toggle
             label="Remember each series"
             detail="Reuse manually selected audio and subtitle languages for later episodes."
             checked={draft.player.rememberSeriesPreferences}
-            onChange={(value) => setDraft({
-              ...draft,
-              player: { ...draft.player, rememberSeriesPreferences: value }
-            })}
+            onChange={(value) => updatePlayer({ rememberSeriesPreferences: value })}
           />
           <p className="settings-note settings-note--signal">
             No matching language means subtitles stay off. A manual track
@@ -382,7 +385,7 @@ export function SettingsPage({
           </header>
           <SubtitleAppearanceEditor
             player={draft.player}
-            onChange={(player) => setDraft({ ...draft, player })}
+            onChange={(player) => setDraft((current) => ({ ...current, player }))}
           />
         </section>
 
@@ -420,6 +423,7 @@ export function SettingsPage({
                   ))}
                 </select>
                 <button
+                  type="button"
                   aria-label="Refresh audio devices"
                   className="button button--glass"
                   disabled={!mpv.available || audioDevicesBusy}
@@ -465,61 +469,31 @@ export function SettingsPage({
                   checked={draft.player.audioPassthrough.ac3}
                   detail="Dolby Digital"
                   label="AC-3"
-                  onChange={(value) => setDraft({
-                    ...draft,
-                    player: {
-                      ...draft.player,
-                      audioPassthrough: { ...draft.player.audioPassthrough, ac3: value }
-                    }
-                  })}
+                  onChange={(value) => updateAudioPassthrough({ ac3: value })}
                 />
                 <CodecToggle
                   checked={draft.player.audioPassthrough.eac3}
                   detail="Dolby Digital Plus / Atmos"
                   label="E-AC-3"
-                  onChange={(value) => setDraft({
-                    ...draft,
-                    player: {
-                      ...draft.player,
-                      audioPassthrough: { ...draft.player.audioPassthrough, eac3: value }
-                    }
-                  })}
+                  onChange={(value) => updateAudioPassthrough({ eac3: value })}
                 />
                 <CodecToggle
                   checked={draft.player.audioPassthrough.truehd}
                   detail="Dolby TrueHD / Atmos"
                   label="TrueHD"
-                  onChange={(value) => setDraft({
-                    ...draft,
-                    player: {
-                      ...draft.player,
-                      audioPassthrough: { ...draft.player.audioPassthrough, truehd: value }
-                    }
-                  })}
+                  onChange={(value) => updateAudioPassthrough({ truehd: value })}
                 />
                 <CodecToggle
                   checked={draft.player.audioPassthrough.dts}
                   detail="DTS core"
                   label="DTS"
-                  onChange={(value) => setDraft({
-                    ...draft,
-                    player: {
-                      ...draft.player,
-                      audioPassthrough: { ...draft.player.audioPassthrough, dts: value }
-                    }
-                  })}
+                  onChange={(value) => updateAudioPassthrough({ dts: value })}
                 />
                 <CodecToggle
                   checked={draft.player.audioPassthrough.dtsHd}
                   detail="DTS-HD MA / DTS:X"
                   label="DTS-HD"
-                  onChange={(value) => setDraft({
-                    ...draft,
-                    player: {
-                      ...draft.player,
-                      audioPassthrough: { ...draft.player.audioPassthrough, dtsHd: value }
-                    }
-                  })}
+                  onChange={(value) => updateAudioPassthrough({ dtsHd: value })}
                 />
               </div>
             </div>
@@ -655,28 +629,19 @@ export function SettingsPage({
               label="Automatically skip intros"
               detail={`Wait ${draft.player.skipPromptDurationSeconds} seconds, then skip. Press ${draft.player.skipSegmentKey} immediately.`}
               checked={draft.player.autoSkipIntro}
-              onChange={(value) => setDraft({
-                ...draft,
-                player: { ...draft.player, autoSkipIntro: value }
-              })}
+              onChange={(value) => updatePlayer({ autoSkipIntro: value })}
             />
             <Toggle
               label="Automatically skip endings"
               detail={`Wait ${draft.player.skipPromptDurationSeconds} seconds before advancing or seeking.`}
               checked={draft.player.autoSkipOutro}
-              onChange={(value) => setDraft({
-                ...draft,
-                player: { ...draft.player, autoSkipOutro: value }
-              })}
+              onChange={(value) => updatePlayer({ autoSkipOutro: value })}
             />
             <Toggle
               label="Play the next episode"
               detail="Show a countdown at the end of an episode and continue automatically."
               checked={draft.player.autoPlayNext}
-              onChange={(value) => setDraft({
-                ...draft,
-                player: { ...draft.player, autoPlayNext: value }
-              })}
+              onChange={(value) => updatePlayer({ autoPlayNext: value })}
             />
           </div>
         </section>
@@ -692,9 +657,9 @@ export function SettingsPage({
               return (
                 <div key={id} className={hidden ? 'is-hidden' : ''}>
                   <span><strong>{HOME_SECTION_LABELS[id]}</strong><small>{hidden ? 'Hidden' : 'Visible'}</small></span>
-                  <button className="icon-button" aria-label={`Move ${HOME_SECTION_LABELS[id]} up`} disabled={index === 0} onClick={() => moveHomeSection(id, -1)}><ArrowUp /></button>
-                  <button className="icon-button" aria-label={`Move ${HOME_SECTION_LABELS[id]} down`} disabled={index === draft.home.sectionOrder.length - 1} onClick={() => moveHomeSection(id, 1)}><ArrowDown /></button>
-                  <button className="icon-button" aria-label={`${hidden ? 'Show' : 'Hide'} ${HOME_SECTION_LABELS[id]}`} onClick={() => toggleHomeSection(id)}>{hidden ? <EyeOff /> : <Eye />}</button>
+                  <button type="button" className="icon-button" aria-label={`Move ${HOME_SECTION_LABELS[id]} up`} disabled={index === 0} onClick={() => moveHomeSection(id, -1)}><ArrowUp /></button>
+                  <button type="button" className="icon-button" aria-label={`Move ${HOME_SECTION_LABELS[id]} down`} disabled={index === draft.home.sectionOrder.length - 1} onClick={() => moveHomeSection(id, 1)}><ArrowDown /></button>
+                  <button type="button" className="icon-button" aria-label={`${hidden ? 'Show' : 'Hide'} ${HOME_SECTION_LABELS[id]}`} onClick={() => toggleHomeSection(id)}>{hidden ? <EyeOff /> : <Eye />}</button>
                 </div>
               );
             })}
@@ -726,10 +691,10 @@ export function SettingsPage({
             label="Auto-join an unambiguous cast"
             detail="Only when exactly one accessible group exists."
             checked={draft.syncPlay.autoJoinUnambiguousCast}
-            onChange={(value) => setDraft({
-              ...draft,
-              syncPlay: { ...draft.syncPlay, autoJoinUnambiguousCast: value }
-            })}
+            onChange={(value) => setDraft((current) => ({
+              ...current,
+              syncPlay: { ...current.syncPlay, autoJoinUnambiguousCast: value }
+            }))}
           />
           <div className="settings-columns">
             <label className="field">
@@ -768,7 +733,7 @@ export function SettingsPage({
         </section>
       </div>
 
-      <button className="button button--primary settings-save" onClick={save} disabled={busy}>
+      <button type="button" className="button button--primary settings-save" onClick={save} disabled={busy}>
         <Save /> {busy ? 'Saving…' : 'Save settings'}
       </button>
     </div>
@@ -1020,11 +985,16 @@ function Toggle({
   onChange(value: boolean): void;
 }) {
   return (
-    <label className="toggle">
+    <button
+      className="toggle"
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+    >
       <span><strong>{label}</strong><small>{detail}</small></span>
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
-      <i />
-    </label>
+      <i aria-hidden="true" />
+    </button>
   );
 }
 
@@ -1040,14 +1010,15 @@ function CodecToggle({
   onChange(value: boolean): void;
 }) {
   return (
-    <label className={`codec-toggle${checked ? ' codec-toggle--active' : ''}`}>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-      />
+    <button
+      className={`codec-toggle${checked ? ' codec-toggle--active' : ''}`}
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+    >
       <span><strong>{label}</strong><small>{detail}</small></span>
       <i>{checked ? 'ON' : 'OFF'}</i>
-    </label>
+    </button>
   );
 }

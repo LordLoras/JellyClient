@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.1 — 2026-08-01
+
+- Replace hidden checkbox-based settings toggles with explicit switch controls
+  so automatic skipping, playback, subtitle, codec, and SyncPlay options remain
+  stable while they are changed.
+- Add navigation history inside item details. A visible Back control, `Alt+Left`,
+  `Escape`, and the mouse back button can now return from an episode to its
+  season and then to its series without closing the details view.
+- Correct season and episode headings so optional labels do not leave a leading
+  separator.
+- Expand automated coverage to 118 unit tests and 16 desktop workflows,
+  including settings-toggle stability and series navigation.
+
 ## 1.4.0 — 2026-08-01
 
 - Add text-subtitle scaling from 50–200%, named presets, 1% adjustment,

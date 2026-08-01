@@ -163,7 +163,8 @@ export function App() {
       return;
     }
     if (useAppStore.getState().detail) {
-      useAppStore.getState().setDetail(null);
+      const current = useAppStore.getState();
+      if (!current.goBackDetail()) current.setDetail(null);
       return;
     }
     useAppStore.getState().goBack();
@@ -234,7 +235,7 @@ export function App() {
     }
     store.setBusy(true);
     try {
-      store.setDetail(await window.jellyClient.getItem(item.id));
+      store.pushDetail(await window.jellyClient.getItem(item.id));
     } catch (error) {
       store.addNotice('error', friendlyError(error));
     } finally {
@@ -606,6 +607,10 @@ export function App() {
         <ItemDetailsPanel
           item={store.detail}
           syncPlay={store.syncPlay}
+          backLabel={store.detailHistory.at(-1)?.name ?? null}
+          onBack={() => {
+            if (!store.goBackDetail()) store.setDetail(null);
+          }}
           onClose={() => store.setDetail(null)}
           onPlay={(input) => void play(store.detail!, input)}
           onWatchTogether={() => void watchTogether(store.detail!)}

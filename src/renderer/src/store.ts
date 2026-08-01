@@ -47,6 +47,7 @@ interface AppStore {
   home: HomePayload | null;
   page: ItemsPage | null;
   detail: ItemDetails | null;
+  detailHistory: ItemDetails[];
   view: MainView;
   navigationHistory: NavigationEntry[];
   busy: boolean;
@@ -59,6 +60,8 @@ interface AppStore {
   setHome(value: HomePayload): void;
   setPage(value: ItemsPage | null): void;
   setDetail(value: ItemDetails | null): void;
+  pushDetail(value: ItemDetails): void;
+  goBackDetail(): boolean;
   setView(value: MainView): void;
   goBack(): boolean;
   resetNavigation(): void;
@@ -79,6 +82,7 @@ export const useAppStore = create<AppStore>((set) => ({
   home: null,
   page: null,
   detail: null,
+  detailHistory: [],
   view: { kind: 'home' },
   navigationHistory: [],
   busy: false,
@@ -109,7 +113,36 @@ export const useAppStore = create<AppStore>((set) => ({
   setMpv: (value) => set({ mpv: value }),
   setHome: (value) => set({ home: value }),
   setPage: (value) => set({ page: value }),
-  setDetail: (value) => set({ detail: value }),
+  setDetail: (value) => set((state) => ({
+    detail: value,
+    detailHistory: value === null ? [] : state.detailHistory
+  })),
+  pushDetail: (value) => set((state) => {
+    if (!state.detail) {
+      return { detail: value, detailHistory: [] };
+    }
+    if (state.detail.id === value.id) return { detail: value };
+    return {
+      detail: value,
+      detailHistory: [
+        ...state.detailHistory.slice(-18),
+        state.detail
+      ]
+    };
+  }),
+  goBackDetail: () => {
+    let navigated = false;
+    set((state) => {
+      const previous = state.detailHistory.at(-1);
+      if (!previous) return {};
+      navigated = true;
+      return {
+        detail: previous,
+        detailHistory: state.detailHistory.slice(0, -1)
+      };
+    });
+    return navigated;
+  },
   setView: (value) =>
     set((state) => {
       if (sameView(state.view, value)) return {};
@@ -139,7 +172,8 @@ export const useAppStore = create<AppStore>((set) => ({
     view: { kind: 'home' },
     navigationHistory: [],
     page: null,
-    detail: null
+    detail: null,
+    detailHistory: []
   }),
   setBusy: (value) => set({ busy: value }),
   addNotice: (level, message) =>

@@ -170,7 +170,7 @@ const server = createServer(
       return;
     }
     if (path === '/items/latest') {
-      json(response, []);
+      json(response, [itemForId('navigation-series')]);
       return;
     }
     if (path === '/movies/recommendations') {
@@ -325,6 +325,25 @@ const server = createServer(
       }
       if (parentId === 'playlist-1') {
         json(response, { Items: playlistEntries, TotalRecordCount: playlistEntries.length });
+        return;
+      }
+      if (parentId === 'navigation-series') {
+        const seasons = [itemForId('navigation-season-1'), itemForId('navigation-season-2')];
+        json(response, { Items: seasons, TotalRecordCount: seasons.length });
+        return;
+      }
+      if (parentId === 'navigation-season-1') {
+        const episodes = [navigationEpisode(1, 1), navigationEpisode(1, 2)];
+        json(response, { Items: episodes, TotalRecordCount: episodes.length });
+        return;
+      }
+      if (parentId === 'navigation-season-2') {
+        const episodes = [
+          navigationEpisode(2, 1),
+          navigationEpisode(2, 2),
+          navigationEpisode(2, 3)
+        ];
+        json(response, { Items: episodes, TotalRecordCount: episodes.length });
         return;
       }
       if (parentId && parentId !== 'movies-library') {
@@ -565,18 +584,18 @@ test('defaults automatic subtitles to English', async () => {
     page.getByRole('heading', { name: 'Language preferences' })
   ).toBeVisible();
   await expect(
-    page.getByRole('checkbox', {
+    page.getByRole('switch', {
       name: /Automatically enable subtitles/
     })
-  ).toBeChecked();
+  ).toHaveAttribute('aria-checked', 'true');
   await expect(
     page.getByRole('combobox', { name: /Preferred language/ })
   ).toHaveValue('eng');
   const audioMode = page.getByRole('combobox', { name: 'Audio output mode' });
   await expect(audioMode).toHaveValue('pcm');
   await audioMode.selectOption('passthrough');
-  await expect(page.getByRole('checkbox', { name: /E-AC-3/ })).toBeChecked();
-  await expect(page.getByRole('checkbox', { name: /TrueHD/ })).not.toBeChecked();
+  await expect(page.getByRole('switch', { name: /E-AC-3/ })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('switch', { name: /TrueHD/ })).toHaveAttribute('aria-checked', 'false');
   await page.getByRole('heading', { name: 'Audio output' }).scrollIntoViewIfNeeded();
   await page.screenshot({
     path: resolve('artifacts', 'settings-audio-output.png'),
@@ -585,7 +604,7 @@ test('defaults automatic subtitles to English', async () => {
 });
 
 test('hides empty filesystem folders from a movie library', async () => {
-  await page.getByRole('button', { name: 'Movies' }).click();
+  await page.getByRole('button', { name: 'Movies', exact: true }).click();
 
   await expect(
     page.getByRole('heading', { name: 'Movies' })
@@ -691,12 +710,18 @@ test('saves Windows playback and home-screen settings through the real UI', asyn
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
 
+  const audioMode = page.getByRole('combobox', { name: 'Audio output mode' });
+  await audioMode.selectOption('passthrough');
+  await exerciseSettingsSwitches(page);
+  await audioMode.selectOption('pcm');
+
   await page.getByRole('combobox', { name: 'HDR behavior' }).selectOption('tone-map');
   await page.getByRole('combobox', { name: 'Playback speed' }).selectOption('1.25');
   await page.getByRole('combobox', { name: 'Preferred language' }).selectOption('spa');
-  await page.getByRole('checkbox', { name: /Start fullscreen/ }).uncheck();
-  await page.getByRole('checkbox', { name: /Automatically skip intros/ }).check();
-  await page.getByRole('checkbox', { name: /Automatically skip endings/ }).check();
+  await setSwitch(page, /Start fullscreen/, false);
+  await setSwitch(page, /Automatically skip intros/, true);
+  await setSwitch(page, /Automatically skip endings/, true);
+  await expect(page.locator('.settings-page')).toBeVisible();
   const skipShortcut = page.getByRole('button', { name: 'Skip shortcut' });
   await skipShortcut.click();
   await skipShortcut.press('F4');
@@ -780,8 +805,34 @@ test('saves Windows playback and home-screen settings through the real UI', asyn
   await expect(page.getByText('Playback settings saved.')).toBeVisible();
 });
 
+test('returns from an episode to its season and series inside item details', async () => {
+  await page.getByRole('button', { name: 'Home' }).click();
+  await openMediaCard(page, 'Navigation Series');
+  const details = page.locator('.detail-sheet');
+  await expect(details.getByRole('heading', { name: 'Navigation Series', level: 1 })).toBeVisible();
+
+  await details.getByRole('button', { name: /Season 2/ }).click();
+  await expect(details.getByRole('heading', { name: 'Season 2', level: 2 })).toBeVisible();
+
+  await details.getByRole('button', { name: /S02 E03 · Episode 3/ }).click();
+  await expect(details.getByRole('heading', { name: /S02 E03 · Episode 3/, level: 2 })).toBeVisible();
+  await details.screenshot({
+    path: resolve('artifacts', 'detail-navigation-back.png')
+  });
+
+  await details.getByRole('button', { name: 'Back to Season 2' }).click();
+  await expect(details.getByRole('heading', { name: 'Season 2', level: 2 })).toBeVisible();
+  await details.getByRole('button', { name: 'Back to Navigation Series' }).click();
+  await expect(details.getByText('Seasons', { exact: true })).toBeVisible();
+
+  await details.getByRole('button', { name: /Season 2/ }).click();
+  await page.keyboard.press('Alt+ArrowLeft');
+  await expect(details.getByText('Seasons', { exact: true })).toBeVisible();
+  await details.getByRole('button', { name: 'Close' }).click();
+});
+
 test('drives search, advanced filters, keyboard back, and mouse back', async () => {
-  await page.getByRole('button', { name: 'Movies' }).click();
+  await page.getByRole('button', { name: 'Movies', exact: true }).click();
   const search = page.getByRole('textbox', { name: 'Search your library' });
   await search.fill('needle');
   await search.press('Enter');
@@ -813,7 +864,7 @@ test('drives search, advanced filters, keyboard back, and mouse back', async () 
 });
 
 test('uses item details, My List, watched state, lists, genres, people, and recommendations', async () => {
-  await page.getByRole('button', { name: 'Movies' }).click();
+  await page.getByRole('button', { name: 'Movies', exact: true }).click();
   await openMediaCard(page, 'Real Movie');
   const details = page.getByRole('dialog');
   await expect(details.getByRole('heading', { name: 'Real Movie' })).toBeVisible();
@@ -858,6 +909,8 @@ test('uses item details, My List, watched state, lists, genres, people, and reco
   await page.getByRole('dialog').getByRole('button', { name: /Similar Movie/ }).click();
   await expect(page.getByRole('dialog').getByRole('heading', { name: 'Similar Movie' })).toBeVisible();
   await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog').getByRole('heading', { name: 'Real Movie' })).toBeVisible();
+  await page.keyboard.press('Escape');
 });
 
 test('reorders and removes playlist entries through the detail sheet', async () => {
@@ -880,7 +933,7 @@ test('reorders and removes playlist entries through the detail sheet', async () 
 test('plays synthetic media through real MPV and clicks the complete player dock', async () => {
   test.skip(playbackMedia.length === 0, 'ffmpeg is required to generate the playback fixture.');
   test.skip(!mpvPath, 'mpv is required to run the real playback checks.');
-  await page.getByRole('button', { name: 'Movies' }).click();
+  await page.getByRole('button', { name: 'Movies', exact: true }).click();
   await openMediaCard(page, 'Real Movie');
   const details = page.getByRole('dialog');
   await details.getByLabel('Audio').selectOption('2');
@@ -1092,6 +1145,35 @@ function playlistChild(entryId: string, itemId: string, name: string) {
 }
 
 function itemForId(id: string) {
+  if (id === 'navigation-series') {
+    return {
+      Id: id,
+      Name: 'Navigation Series',
+      Type: 'Series',
+      IsFolder: true,
+      ChildCount: 2,
+      Overview: 'A fixture series for testing season and episode navigation.',
+      UserData: { Played: false, IsFavorite: false }
+    };
+  }
+  if (id === 'navigation-season-1' || id === 'navigation-season-2') {
+    const season = id.endsWith('-1') ? 1 : 2;
+    return {
+      Id: id,
+      Name: `Season ${season}`,
+      Type: 'Season',
+      IsFolder: true,
+      SeriesId: 'navigation-series',
+      SeriesName: 'Navigation Series',
+      IndexNumber: season,
+      ChildCount: season === 1 ? 2 : 3,
+      UserData: { Played: false, IsFavorite: false, UnplayedItemCount: season === 1 ? 2 : 3 }
+    };
+  }
+  const navigationMatch = id.match(/^navigation-s(\d+)e(\d+)$/);
+  if (navigationMatch) {
+    return navigationEpisode(Number(navigationMatch[1]), Number(navigationMatch[2]));
+  }
   if (id === 'playlist-1') {
     return {
       Id: id,
@@ -1137,6 +1219,59 @@ function itemForId(id: string) {
     'search-movie': 'Search Result Movie'
   };
   return movieItem(id, names[id] ?? 'Fixture Movie');
+}
+
+function navigationEpisode(season: number, episode: number) {
+  return {
+    Id: `navigation-s${season}e${episode}`,
+    Name: `Episode ${episode}`,
+    Type: 'Episode',
+    IsFolder: false,
+    SeriesId: 'navigation-series',
+    SeriesName: 'Navigation Series',
+    SeasonId: `navigation-season-${season}`,
+    ParentIndexNumber: season,
+    IndexNumber: episode,
+    RunTimeTicks: 1_800_000_000,
+    MediaSources: fixtureMediaSources(),
+    UserData: {
+      PlaybackPositionTicks: 0,
+      PlayedPercentage: 0,
+      Played: false,
+      IsFavorite: false
+    }
+  };
+}
+
+async function setSwitch(
+  targetPage: Page,
+  name: string | RegExp,
+  checked: boolean
+): Promise<void> {
+  const control = targetPage.getByRole('switch', { name });
+  if ((await control.getAttribute('aria-checked')) !== String(checked)) {
+    await control.click();
+  }
+  await expect(control).toHaveAttribute('aria-checked', String(checked));
+  await expect(targetPage.locator('.settings-page')).toBeVisible();
+}
+
+async function exerciseSettingsSwitches(targetPage: Page): Promise<void> {
+  const switches = targetPage.getByRole('switch');
+  const count = await switches.count();
+  expect(count).toBeGreaterThan(0);
+  for (let index = 0; index < count; index += 1) {
+    const control = switches.nth(index);
+    const original = await control.getAttribute('aria-checked');
+    await control.click();
+    await expect(control).toHaveAttribute(
+      'aria-checked',
+      original === 'true' ? 'false' : 'true'
+    );
+    await expect(targetPage.locator('.settings-page')).toBeVisible();
+    await control.click();
+    await expect(control).toHaveAttribute('aria-checked', original ?? 'false');
+  }
 }
 
 async function preparePlaybackFixture(): Promise<Buffer> {
