@@ -7,11 +7,19 @@ library data and stream negotiation, then opens playback in MPV.
 
 - Find Jellyfin servers on the local network or enter an address manually.
 - Sign in with a username and password or Jellyfin Quick Connect.
-- Browse home sections, libraries, folders, Continue Watching, and Up Next.
-- Search the library and open a dedicated Favorites view.
-- Filter libraries by watched, unwatched, or favorite status.
-- Sort by title, date added, release date, year, rating, or runtime.
+- Browse configurable home sections for Continue Watching, Up Next, My List,
+  recently watched, recommendations, recently added titles, and libraries.
+- Search the library and open dedicated My List, history, playlist, and
+  collection views.
+- Browse series, seasons, genres, people, and related titles from item details.
+- Filter libraries by watched state, My List, media type, genre, year, rating,
+  4K availability, or subtitle availability.
+- Sort by title, date added, release date, year, rating, runtime, or last played.
 - Mark an item watched or unwatched and add or remove it from favorites.
+- Restart an item from the beginning or remove saved progress from Continue
+  Watching, with a short Undo period.
+- Create playlists and collections, add or remove titles, and reorder playlist
+  entries.
 - Open available trailers and special features.
 - Return through library, search, and settings history from the top bar,
   `Alt+Left`, or a mouse back button.
@@ -68,6 +76,19 @@ library data and stream negotiation, then opens playback in MPV.
 - Correct small timing drift while retaining hard correction for larger drift.
 - Recover from slow MPV loads and superseded rapid commands without leaving
   and rejoining the group.
+- Request a clean room resynchronization if a client or network interruption
+  leaves the local timeline behind.
+- Continue measuring drift during playback and correct large offsets that
+  develop after the initial start sequence.
+
+## Remote control and recovery
+
+- Receive Jellyfin Play On commands from another Jellyfin client.
+- Apply remote play, pause, seek, and stop commands locally or through the
+  active SyncPlay room.
+- Retry a failed MPV load from the last known position.
+- Choose a preferred Windows display for new MPV sessions or leave display
+  selection automatic.
 
 ## Playback information
 

@@ -1,6 +1,7 @@
 # JellyClient
 
-JellyClient contains Jellyfin clients for Windows and VIDAA televisions.
+JellyClient is an unofficial Jellyfin client project for Windows and VIDAA
+televisions.
 
 ## Windows
 
@@ -52,3 +53,8 @@ pnpm test
 pnpm build
 pnpm vidaa:build
 ```
+
+## License
+
+JellyClient is licensed under the
+[GNU General Public License version 3 or later](LICENSE).

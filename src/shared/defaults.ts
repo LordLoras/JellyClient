@@ -22,6 +22,7 @@ export const defaultSettings: AppSettings = {
       dtsHd: false
     },
     alwaysOnTop: false,
+    preferredDisplayId: 'auto',
     fullscreenOnPlay: true,
     autoEnableSubtitles: true,
     preferredAudioLanguage: 'eng',
@@ -42,6 +43,18 @@ export const defaultSettings: AppSettings = {
     autoJoinUnambiguousCast: true,
     softCorrectionThresholdMs: 80,
     hardSeekThresholdMs: 500
+  },
+  home: {
+    sectionOrder: [
+      'resume',
+      'nextUp',
+      'favorites',
+      'recentlyPlayed',
+      'recommended',
+      'latest',
+      'libraries'
+    ],
+    hiddenSections: []
   }
 };
 

@@ -28,6 +28,8 @@ const api: JellyClientApi = {
   getHome: () => ipcRenderer.invoke('catalog:home'),
   discardPlaybackProgress: (itemId: string) =>
     ipcRenderer.invoke('catalog:discard-progress', itemId),
+  restorePlaybackProgress: (itemId: string, positionTicks: number) =>
+    ipcRenderer.invoke('catalog:restore-progress', itemId, positionTicks),
   getItems: (query: CatalogQuery) =>
     ipcRenderer.invoke('catalog:items', query),
   getItem: (itemId: string) =>
@@ -36,6 +38,15 @@ const api: JellyClientApi = {
     ipcRenderer.invoke('catalog:favorite', itemId, favorite),
   setPlayed: (itemId: string, played: boolean) =>
     ipcRenderer.invoke('catalog:played', itemId, played),
+  listContainers: (kind) => ipcRenderer.invoke('catalog:containers', kind),
+  createContainer: (kind, name, itemId) =>
+    ipcRenderer.invoke('catalog:create-container', kind, name, itemId),
+  addToContainer: (kind, containerId, itemId) =>
+    ipcRenderer.invoke('catalog:add-container-item', kind, containerId, itemId),
+  removeFromContainer: (kind, containerId, entryId) =>
+    ipcRenderer.invoke('catalog:remove-container-item', kind, containerId, entryId),
+  movePlaylistItem: (playlistId, entryId, newIndex) =>
+    ipcRenderer.invoke('catalog:move-playlist-item', playlistId, entryId, newIndex),
   play: (input: PlayMediaInput) =>
     ipcRenderer.invoke('playback:play', input),
   playbackAction: (action) =>
@@ -44,6 +55,7 @@ const api: JellyClientApi = {
     ipcRenderer.invoke('diagnostics:copy', report),
   probeMpv: () => ipcRenderer.invoke('settings:probe-mpv'),
   listAudioDevices: () => ipcRenderer.invoke('settings:list-audio-devices'),
+  listDisplays: () => ipcRenderer.invoke('settings:list-displays'),
   saveSettings: (settings: AppSettings) =>
     ipcRenderer.invoke('settings:save', settings),
   chooseMpv: () => ipcRenderer.invoke('settings:choose-mpv'),
@@ -58,6 +70,7 @@ const api: JellyClientApi = {
     ipcRenderer.invoke('syncplay:watch-together', input),
   syncPlayAction: (action) =>
     ipcRenderer.invoke('syncplay:action', action),
+  resyncSyncPlay: () => ipcRenderer.invoke('syncplay:resync'),
   subscribe: (listener: (event: ClientEvent) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, value: ClientEvent) => {
       listener(value);

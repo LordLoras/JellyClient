@@ -78,6 +78,17 @@ export function SyncPlayPanel({
     }
   };
 
+  const resync = async () => {
+    setBusy(true);
+    try {
+      onChange(await window.jellyClient.resyncSyncPlay());
+    } catch (error) {
+      onNotice(friendlyError(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <aside className="side-panel">
       <header className="side-panel__header">
@@ -108,6 +119,9 @@ export function SyncPlayPanel({
               Playback offset <strong>{state.driftMs.toFixed(1)} ms</strong>
             </span>
           </div>
+          <button className="button button--glass button--wide" onClick={resync} disabled={busy}>
+            <RefreshCw /> Resync player
+          </button>
           <button className="button button--danger button--wide" onClick={leave} disabled={busy}>
             <DoorOpen /> Leave room
           </button>

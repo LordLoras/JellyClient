@@ -12,6 +12,10 @@ interface Props {
   onOpen(item: MediaItem): void;
   onPlay(item: MediaItem): void;
   onDismiss?(item: MediaItem): void;
+  onFavorite?(item: MediaItem): void;
+  onPlayed?(item: MediaItem): void;
+  onRestart?(item: MediaItem): void;
+  dismissLabel?: string;
 }
 
 export function MediaRail({
@@ -22,7 +26,11 @@ export function MediaRail({
   presentation,
   onOpen,
   onPlay,
-  onDismiss
+  onDismiss,
+  onFavorite,
+  onPlayed,
+  onRestart,
+  dismissLabel
 }: Props) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState({ start: true, end: false });
@@ -92,6 +100,10 @@ export function MediaRail({
             onOpen={onOpen}
             onPlay={onPlay}
             {...(onDismiss ? { onDismiss } : {})}
+            {...(onFavorite ? { onFavorite } : {})}
+            {...(onPlayed ? { onPlayed } : {})}
+            {...(onRestart ? { onRestart } : {})}
+            {...(dismissLabel ? { dismissLabel } : {})}
           />
         ))}
       </div>

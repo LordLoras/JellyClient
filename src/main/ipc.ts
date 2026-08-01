@@ -4,6 +4,7 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  screen,
   shell
 } from 'electron';
 import { z } from 'zod';
@@ -13,6 +14,7 @@ import type {
   PlaybackState
 } from '@shared/contracts.js';
 import {
+  catalogContainerKindSchema,
   catalogQuerySchema,
   connectionInputSchema,
   playMediaInputSchema,
@@ -66,6 +68,7 @@ const playbackActionSchema = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('cancel-post-play') }),
   z.object({ type: z.literal('play-next') }),
+  z.object({ type: z.literal('retry') }),
   z.object({
     type: z.literal('select-track'),
     trackType: z.enum(['audio', 'subtitle']),
@@ -152,6 +155,12 @@ export function registerIpc(services: Services): () => void {
   handle('catalog:item', async (_event, itemId) => {
     return jellyfin.getItem(z.string().min(1).max(100).parse(itemId));
   });
+  handle('catalog:restore-progress', async (_event, itemId, positionTicks) => {
+    return jellyfin.restorePlaybackProgress(
+      z.string().min(1).max(100).parse(itemId),
+      z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(positionTicks)
+    );
+  });
   handle('catalog:favorite', async (_event, itemId, favorite) => {
     return jellyfin.setFavorite(
       z.string().min(1).max(100).parse(itemId),
@@ -162,6 +171,37 @@ export function registerIpc(services: Services): () => void {
     return jellyfin.setPlayed(
       z.string().min(1).max(100).parse(itemId),
       z.boolean().parse(played)
+    );
+  });
+  handle('catalog:containers', async (_event, kind) => {
+    return jellyfin.listContainers(catalogContainerKindSchema.parse(kind));
+  });
+  handle('catalog:create-container', async (_event, kind, name, itemId) => {
+    return jellyfin.createContainer(
+      catalogContainerKindSchema.parse(kind),
+      z.string().trim().min(1).max(200).parse(name),
+      z.string().min(1).max(100).parse(itemId)
+    );
+  });
+  handle('catalog:add-container-item', async (_event, kind, containerId, itemId) => {
+    return jellyfin.addToContainer(
+      catalogContainerKindSchema.parse(kind),
+      z.string().min(1).max(100).parse(containerId),
+      z.string().min(1).max(100).parse(itemId)
+    );
+  });
+  handle('catalog:remove-container-item', async (_event, kind, containerId, entryId) => {
+    return jellyfin.removeFromContainer(
+      catalogContainerKindSchema.parse(kind),
+      z.string().min(1).max(100).parse(containerId),
+      z.string().min(1).max(100).parse(entryId)
+    );
+  });
+  handle('catalog:move-playlist-item', async (_event, playlistId, entryId, newIndex) => {
+    return jellyfin.movePlaylistItem(
+      z.string().min(1).max(100).parse(playlistId),
+      z.string().min(1).max(100).parse(entryId),
+      z.number().int().min(0).max(100_000).parse(newIndex)
     );
   });
 
@@ -229,6 +269,10 @@ export function registerIpc(services: Services): () => void {
       case 'play-next':
         await playback.playNext();
         break;
+      case 'retry':
+        if (joined) await syncPlay.resync();
+        else await playback.retry();
+        break;
       case 'select-track':
         await playback.selectTrackLocal(action.trackType, action.id);
         break;
@@ -259,6 +303,16 @@ export function registerIpc(services: Services): () => void {
   });
   handle('settings:probe-mpv', async () => mpv.probe());
   handle('settings:list-audio-devices', async () => mpv.listAudioDevices());
+  handle('settings:list-displays', async () => {
+    const primaryId = String(screen.getPrimaryDisplay().id);
+    return screen.getAllDisplays().map((display, index) => ({
+      id: String(display.id),
+      name: display.label?.trim() || `Display ${index + 1}`,
+      primary: String(display.id) === primaryId,
+      width: display.bounds.width,
+      height: display.bounds.height
+    }));
+  });
   handle('settings:open-config', async () => {
     const result = await shell.openPath(dirname(config.path));
     if (result) throw new Error(result);
@@ -281,6 +335,7 @@ export function registerIpc(services: Services): () => void {
   handle('syncplay:action', async (_event, raw) => {
     return syncPlay.action(syncPlayActionSchema.parse(raw));
   });
+  handle('syncplay:resync', async () => syncPlay.resync());
 
   const unsubscribe = events.onClient((event) => {
     for (const window of BrowserWindow.getAllWindows()) {

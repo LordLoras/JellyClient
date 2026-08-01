@@ -44,6 +44,7 @@ export const settingsSchema = z.object({
       dtsHd: false
     }),
     alwaysOnTop: z.boolean(),
+    preferredDisplayId: z.string().trim().min(1).max(100).default('auto'),
     fullscreenOnPlay: z.boolean(),
     autoEnableSubtitles: z.boolean().default(true),
     preferredAudioLanguage: z.string().trim().min(2).max(35).default('eng'),
@@ -71,6 +72,37 @@ export const settingsSchema = z.object({
     autoJoinUnambiguousCast: z.boolean(),
     softCorrectionThresholdMs: z.number().int().min(20).max(1000),
     hardSeekThresholdMs: z.number().int().min(100).max(5000)
+  }),
+  home: z.object({
+    sectionOrder: z.array(z.enum([
+      'resume',
+      'nextUp',
+      'favorites',
+      'recentlyPlayed',
+      'recommended',
+      'latest',
+      'libraries'
+    ])).max(7),
+    hiddenSections: z.array(z.enum([
+      'resume',
+      'nextUp',
+      'favorites',
+      'recentlyPlayed',
+      'recommended',
+      'latest',
+      'libraries'
+    ])).max(7)
+  }).default({
+    sectionOrder: [
+      'resume',
+      'nextUp',
+      'favorites',
+      'recentlyPlayed',
+      'recommended',
+      'latest',
+      'libraries'
+    ],
+    hiddenSections: []
   })
 });
 
@@ -86,11 +118,20 @@ export const catalogQuerySchema = z.object({
     'PremiereDate',
     'ProductionYear',
     'CommunityRating',
-    'Runtime'
+    'Runtime',
+    'DatePlayed'
   ]).optional(),
   sortDescending: z.boolean().optional(),
-  filter: z.enum(['all', 'unplayed', 'played', 'favorite']).optional()
+  filter: z.enum(['all', 'unplayed', 'played', 'favorite']).optional(),
+  genres: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+  years: z.array(z.number().int().min(1800).max(3000)).max(50).optional(),
+  personIds: z.array(z.string().min(1).max(100)).max(20).optional(),
+  minCommunityRating: z.number().min(0).max(10).optional(),
+  is4K: z.boolean().optional(),
+  hasSubtitles: z.boolean().optional()
 });
+
+export const catalogContainerKindSchema = z.enum(['playlist', 'collection']);
 
 export const playMediaInputSchema = z.object({
   itemId: z.string().min(1).max(100),

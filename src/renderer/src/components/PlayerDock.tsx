@@ -5,6 +5,7 @@ import {
   Maximize2,
   Pause,
   Play,
+  RefreshCw,
   SlidersHorizontal,
   StepBack,
   StepForward,
@@ -56,6 +57,12 @@ export function PlayerDock({ playback, syncPlay, onAction }: Props) {
 
   return (
     <aside className="player-dock">
+      {playback.status === 'error' ? (
+        <div className="player-dock__error" role="alert">
+          <span><strong>Playback stopped</strong><small>{playback.error ?? 'MPV stopped unexpectedly.'}</small></span>
+          <button className="button button--primary" onClick={() => onAction({ type: 'retry' })}><RefreshCw /> Retry</button>
+        </div>
+      ) : null}
       {playback.nextItem && playback.postPlaySecondsRemaining !== null && !playback.postPlayCanceled && (
         <div className="post-play-card">
           {playback.nextItem.imageUrl && <img src={playback.nextItem.imageUrl} alt="" />}

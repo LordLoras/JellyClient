@@ -1,10 +1,13 @@
 import {
   ArrowLeft,
+  Boxes,
   CircleUserRound,
   Clapperboard,
+  Clock3,
   Home,
   Heart,
   Library,
+  ListVideo,
   LoaderCircle,
   LogOut,
   Radio,
@@ -23,13 +26,16 @@ import {
   type FormEvent
 } from 'react';
 import type {
+  CatalogQuery,
   CatalogFilter,
   CatalogSort,
+  HomeSectionId,
   LibraryView,
   MediaItem,
   PlayMediaInput
 } from '@shared/contracts.js';
 import { Brand } from './components/Brand';
+import { AddToListDialog } from './components/AddToListDialog';
 import { DiscardProgressDialog } from './components/DiscardProgressDialog';
 import { Hero } from './components/Hero';
 import { ItemDetailsPanel } from './components/ItemDetailsPanel';
@@ -41,6 +47,7 @@ import { SettingsPage } from './components/SettingsPage';
 import { SyncPlayPanel } from './components/SyncPlayPanel';
 import { friendlyError } from './format';
 import {
+  type MainView,
   playableHero,
   useAppStore
 } from './store';
@@ -51,6 +58,11 @@ export function App() {
   const [searchText, setSearchText] = useState('');
   const [discardItem, setDiscardItem] = useState<MediaItem | null>(null);
   const [discardBusy, setDiscardBusy] = useState(false);
+  const [addToListItem, setAddToListItem] = useState<MediaItem | null>(null);
+  const [undoProgress, setUndoProgress] = useState<{
+    item: MediaItem;
+    positionTicks: number;
+  } | null>(null);
   const homeRefreshTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -119,9 +131,19 @@ export function App() {
 
   const hero = useMemo(() => playableHero(store.home), [store.home]);
 
+  useEffect(() => {
+    if (!undoProgress) return;
+    const timer = window.setTimeout(() => setUndoProgress(null), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [undoProgress]);
+
   const goBack = useCallback(() => {
     if (discardItem && !discardBusy) {
       setDiscardItem(null);
+      return;
+    }
+    if (addToListItem) {
+      setAddToListItem(null);
       return;
     }
     if (syncPanelOpen) {
@@ -133,7 +155,7 @@ export function App() {
       return;
     }
     useAppStore.getState().goBack();
-  }, [discardBusy, discardItem, syncPanelOpen]);
+  }, [addToListItem, discardBusy, discardItem, syncPanelOpen]);
 
   useEffect(() => {
     const onMouseUp = (event: MouseEvent) => {
@@ -143,7 +165,7 @@ export function App() {
     };
     const onKeyDown = (event: KeyboardEvent) => {
       const escapeClosesOverlay = event.key === 'Escape' && Boolean(
-        discardItem || syncPanelOpen || useAppStore.getState().detail
+        discardItem || addToListItem || syncPanelOpen || useAppStore.getState().detail
       );
       if ((event.altKey && event.key === 'ArrowLeft') || escapeClosesOverlay) {
         event.preventDefault();
@@ -156,7 +178,7 @@ export function App() {
       window.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [goBack]);
+  }, [addToListItem, goBack]);
 
   if (!store.bootstrap || !store.connection || !store.settings || !store.mpv || !store.playback || !store.syncPlay) {
     return (
@@ -185,7 +207,10 @@ export function App() {
   }
 
   const openItem = async (item: MediaItem) => {
-    if (item.isFolder || ['Series', 'Season', 'BoxSet'].includes(item.type)) {
+    if (
+      item.isFolder &&
+      !['Series', 'Season', 'BoxSet', 'Playlist'].includes(item.type)
+    ) {
       const library: LibraryView = {
         id: item.id,
         name: item.name,
@@ -243,6 +268,46 @@ export function App() {
     }
   };
 
+  const updateItemState = async (
+    item: MediaItem,
+    kind: 'favorite' | 'played'
+  ) => {
+    try {
+      const updated = kind === 'favorite'
+        ? await window.jellyClient.setFavorite(item.id, !item.isFavorite)
+        : await window.jellyClient.setPlayed(item.id, !item.isPlayed);
+      const current = useAppStore.getState();
+      if (current.page) {
+        current.setPage({
+          ...current.page,
+          items: current.page.items.map((candidate) =>
+            candidate.id === updated.id ? { ...candidate, ...updated } : candidate
+          )
+        });
+      }
+      if (current.detail?.id === updated.id) current.setDetail(updated);
+      await loadHome(true);
+    } catch (error) {
+      store.addNotice('error', friendlyError(error));
+    }
+  };
+
+  const browseGenre = (genre: string) => {
+    store.setDetail(null);
+    void loadSpecialCatalog({
+      view: { kind: 'genre', genre },
+      query: { genres: [genre] }
+    });
+  };
+
+  const browsePerson = (id: string, name: string) => {
+    store.setDetail(null);
+    void loadSpecialCatalog({
+      view: { kind: 'person', id, name },
+      query: { personIds: [id] }
+    });
+  };
+
   const submitSearch = async (event: FormEvent) => {
     event.preventDefault();
     const query = searchText.trim();
@@ -291,8 +356,40 @@ export function App() {
           <NavButton
             active={store.view.kind === 'favorites'}
             icon={<Heart />}
-            label="Favorites"
+            label="My List"
             onClick={() => void loadFavorites()}
+          />
+          <NavButton
+            active={store.view.kind === 'history'}
+            icon={<Clock3 />}
+            label="History"
+            onClick={() => void loadSpecialCatalog({
+              view: { kind: 'history' },
+              query: {
+                filter: 'played',
+                sortBy: 'DatePlayed',
+                sortDescending: true,
+                includeItemTypes: ['Movie', 'Episode', 'Video']
+              }
+            })}
+          />
+          <NavButton
+            active={store.view.kind === 'playlists'}
+            icon={<ListVideo />}
+            label="Playlists"
+            onClick={() => void loadSpecialCatalog({
+              view: { kind: 'playlists' },
+              query: { includeItemTypes: ['Playlist'] }
+            })}
+          />
+          <NavButton
+            active={store.view.kind === 'collections'}
+            icon={<Boxes />}
+            label="Collections"
+            onClick={() => void loadSpecialCatalog({
+              view: { kind: 'collections' },
+              query: { includeItemTypes: ['BoxSet'] }
+            })}
           />
           <p>LIBRARIES</p>
           {(store.home?.libraries ?? []).map((library) => (
@@ -381,6 +478,9 @@ export function App() {
                   libraries: [],
                   resume: [],
                   nextUp: [],
+                  favorites: [],
+                  recentlyPlayed: [],
+                  recommended: [],
                   latest: []
                 });
               }}
@@ -405,29 +505,50 @@ export function App() {
           {store.view.kind === 'home' && (
             <HomeView
               hero={hero}
+              sectionOrder={store.settings.home.sectionOrder}
+              hiddenSections={store.settings.home.hiddenSections}
               onOpen={openItem}
               onPlay={play}
               onWatchTogether={watchTogether}
               onDiscardProgress={setDiscardItem}
+              onFavorite={(item) => void updateItemState(item, 'favorite')}
+              onPlayed={(item) => void updateItemState(item, 'played')}
+              onRestart={(item) => void play(item, {
+                itemId: item.id,
+                startPositionTicks: 0,
+                mediaSourceId: null,
+                maxStreamingBitrate: null,
+                audioStreamIndex: null,
+                subtitleStreamIndex: null
+              })}
             />
           )}
-          {(store.view.kind === 'library' || store.view.kind === 'search' || store.view.kind === 'favorites') && (
+          {(store.view.kind === 'library' ||
+            store.view.kind === 'search' ||
+            store.view.kind === 'favorites' ||
+            store.view.kind === 'history' ||
+            store.view.kind === 'playlists' ||
+            store.view.kind === 'collections' ||
+            store.view.kind === 'genre' ||
+            store.view.kind === 'person') && (
             <CatalogView
-              title={
-                store.view.kind === 'library'
-                  ? store.view.library.name
-                  : store.view.kind === 'search'
-                    ? `Results for “${store.view.query}”`
-                    : 'Favorites'
-              }
-              parentId={store.view.kind === 'library' ? store.view.library.id : null}
-              searchTerm={store.view.kind === 'search' ? store.view.query : ''}
-              initialFilter={store.view.kind === 'favorites' ? 'favorite' : 'all'}
+              title={catalogTitle(store.view)}
+              baseQuery={catalogBaseQuery(store.view)}
               items={store.page?.items ?? []}
               total={store.page?.totalRecordCount ?? 0}
               busy={store.busy}
               onOpen={openItem}
               onPlay={play}
+              onFavorite={(item) => void updateItemState(item, 'favorite')}
+              onPlayed={(item) => void updateItemState(item, 'played')}
+              onRestart={(item) => void play(item, {
+                itemId: item.id,
+                startPositionTicks: 0,
+                mediaSourceId: null,
+                maxStreamingBitrate: null,
+                audioStreamIndex: null,
+                subtitleStreamIndex: null
+              })}
             />
           )}
           {store.view.kind === 'settings' && (
@@ -454,6 +575,38 @@ export function App() {
           onPlay={(input) => void play(store.detail!, input)}
           onWatchTogether={() => void watchTogether(store.detail!)}
           onOpen={(item) => void openItem(item)}
+          onPlayItem={(item) => void play(item)}
+          onAddToList={setAddToListItem}
+          onBrowseGenre={browseGenre}
+          onBrowsePerson={browsePerson}
+          onRemoveChild={(parent, child) => {
+            const kind = parent.type === 'Playlist' ? 'playlist' : 'collection';
+            const entryId = kind === 'playlist'
+              ? child.playlistItemId
+              : child.id;
+            if (!entryId) {
+              store.addNotice('error', 'Jellyfin did not provide a removable list entry.');
+              return;
+            }
+            void window.jellyClient.removeFromContainer(
+              kind,
+              parent.id,
+              entryId
+            ).then(async () => {
+              store.setDetail(await window.jellyClient.getItem(parent.id));
+              store.addNotice('info', `${child.name} was removed from ${parent.name}.`);
+            }).catch((error) => store.addNotice('error', friendlyError(error)));
+          }}
+          onMoveChild={(parent, child, newIndex) => {
+            if (!child.playlistItemId) return;
+            void window.jellyClient.movePlaylistItem(
+              parent.id,
+              child.playlistItemId,
+              newIndex
+            ).then(async () => {
+              store.setDetail(await window.jellyClient.getItem(parent.id));
+            }).catch((error) => store.addNotice('error', friendlyError(error)));
+          }}
           onUpdated={(item) => {
             store.setDetail(item);
             void loadHome(true);
@@ -491,10 +644,10 @@ export function App() {
               .discardPlaybackProgress(discardItem.id)
               .then((home) => {
                 store.setHome(home);
-                store.addNotice(
-                  'info',
-                  `${discardItem.name} was removed from Continue Watching.`
-                );
+                setUndoProgress({
+                  item: discardItem,
+                  positionTicks: discardItem.playbackPositionTicks
+                });
                 setDiscardItem(null);
               })
               .catch((error) =>
@@ -503,6 +656,34 @@ export function App() {
               .finally(() => setDiscardBusy(false));
           }}
         />
+      )}
+
+      {addToListItem && (
+        <AddToListDialog
+          item={addToListItem}
+          onClose={() => setAddToListItem(null)}
+          onChanged={(message) => {
+            store.addNotice('info', message);
+            void loadHome(true);
+          }}
+          onError={reportListError}
+        />
+      )}
+
+      {undoProgress && (
+        <div className="undo-progress" role="status">
+          <span><strong>Removed from Continue Watching</strong><small>{undoProgress.item.name}</small></span>
+          <button onClick={() => {
+            const pending = undoProgress;
+            setUndoProgress(null);
+            void window.jellyClient.restorePlaybackProgress(
+              pending.item.id,
+              pending.positionTicks
+            ).then((home) => store.setHome(home)).catch((error) =>
+              store.addNotice('error', friendlyError(error))
+            );
+          }}>Undo</button>
+        </div>
       )}
 
       <PlayerDock
@@ -522,22 +703,65 @@ export function App() {
 
 function HomeView({
   hero,
+  sectionOrder,
+  hiddenSections,
   onOpen,
   onPlay,
   onWatchTogether,
-  onDiscardProgress
+  onDiscardProgress,
+  onFavorite,
+  onPlayed,
+  onRestart
 }: {
   hero: MediaItem | null;
+  sectionOrder: HomeSectionId[];
+  hiddenSections: HomeSectionId[];
   onOpen(item: MediaItem): void;
   onPlay(item: MediaItem): void;
   onWatchTogether(item: MediaItem): void;
   onDiscardProgress(item: MediaItem): void;
+  onFavorite(item: MediaItem): void;
+  onPlayed(item: MediaItem): void;
+  onRestart(item: MediaItem): void;
 }) {
   const home = useAppStore((state) => state.home);
   const syncPlay = useAppStore((state) => state.syncPlay)!;
   if (!home) {
     return <PageLoading />;
   }
+  const railActions = { onOpen, onPlay, onFavorite, onPlayed, onRestart };
+  const renderSection = (section: HomeSectionId) => {
+    switch (section) {
+      case 'resume':
+        return <MediaRail key={section} title="Continue watching" items={home.resume} landscape {...railActions} onDismiss={onDiscardProgress} />;
+      case 'nextUp':
+        return <MediaRail key={section} title="Up next" items={home.nextUp} landscape presentation="next-up" {...railActions} />;
+      case 'favorites':
+        return <MediaRail key={section} title="My List" items={home.favorites} {...railActions} />;
+      case 'recentlyPlayed':
+        return <MediaRail key={section} title="Recently watched" items={home.recentlyPlayed} landscape {...railActions} />;
+      case 'recommended':
+        return <MediaRail key={section} title="Recommended" items={home.recommended} {...railActions} />;
+      case 'latest':
+        return <MediaRail key={section} title="Recently added" items={home.latest} {...railActions} />;
+      case 'libraries':
+        return home.libraries.length > 0 ? (
+          <section className="library-band" key={section}>
+            <header className="rail__header"><div><h2>Your libraries</h2></div></header>
+            <div className="library-band__grid">
+              {home.libraries.map((library, index) => (
+                <button key={library.id} onClick={() => void loadItems(library, '')} style={{ '--library-index': index } as React.CSSProperties}>
+                  {library.imageUrl && <img src={library.imageUrl} alt="" />}
+                  <i />
+                  <span><small>{library.collectionType ?? 'Library'}</small><strong>{library.name}</strong></span>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null;
+    }
+  };
+
   return (
     <div className="home-view">
       {hero ? (
@@ -555,102 +779,95 @@ function HomeView({
           <p>Jellyfin has not returned any playable video yet.</p>
         </div>
       )}
-      <MediaRail
-        title="Continue watching"
-        items={home.resume}
-        landscape
-        onOpen={onOpen}
-        onPlay={onPlay}
-        onDismiss={onDiscardProgress}
-      />
-      <MediaRail
-        title="Up next"
-        items={home.nextUp}
-        landscape
-        presentation="next-up"
-        onOpen={onOpen}
-        onPlay={onPlay}
-      />
-      <MediaRail
-        title="Recently added"
-        items={home.latest}
-        onOpen={onOpen}
-        onPlay={onPlay}
-      />
-      {home.libraries.length > 0 && (
-        <section className="library-band">
-          <header className="rail__header">
-            <div><h2>Your libraries</h2></div>
-          </header>
-          <div className="library-band__grid">
-            {home.libraries.map((library, index) => (
-              <button
-                key={library.id}
-                onClick={() => void loadItems(library, '')}
-                style={{ '--library-index': index } as React.CSSProperties}
-              >
-                {library.imageUrl && <img src={library.imageUrl} alt="" />}
-                <i />
-                <span><small>{library.collectionType ?? 'Library'}</small><strong>{library.name}</strong></span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
+      {sectionOrder
+        .filter((section) => !hiddenSections.includes(section))
+        .map(renderSection)}
     </div>
   );
 }
 
 function CatalogView({
   title,
-  parentId,
-  searchTerm,
-  initialFilter,
+  baseQuery,
   items,
   total,
   busy,
   onOpen,
-  onPlay
+  onPlay,
+  onFavorite,
+  onPlayed,
+  onRestart
 }: {
   title: string;
-  parentId: string | null;
-  searchTerm: string;
-  initialFilter: CatalogFilter;
+  baseQuery: Partial<CatalogQuery>;
   items: MediaItem[];
   total: number;
   busy: boolean;
   onOpen(item: MediaItem): void;
   onPlay(item: MediaItem): void;
+  onFavorite(item: MediaItem): void;
+  onPlayed(item: MediaItem): void;
+  onRestart(item: MediaItem): void;
 }) {
-  const [sortBy, setSortBy] = useState<CatalogSort>('SortName');
-  const [descending, setDescending] = useState(false);
+  const initialSort = baseQuery.sortBy ?? 'SortName';
+  const initialDescending = baseQuery.sortDescending ?? false;
+  const initialFilter = baseQuery.filter ?? 'all';
+  const fixedType = baseQuery.includeItemTypes?.length === 1
+    ? baseQuery.includeItemTypes[0] ?? 'all'
+    : 'all';
+  const baseQueryKey = JSON.stringify(baseQuery);
+  const containerOnly = fixedType === 'Playlist' || fixedType === 'BoxSet';
+  const [sortBy, setSortBy] = useState<CatalogSort>(initialSort);
+  const [descending, setDescending] = useState(initialDescending);
   const [filter, setFilter] = useState<CatalogFilter>(initialFilter);
+  const [mediaType, setMediaType] = useState(fixedType);
+  const [genreText, setGenreText] = useState((baseQuery.genres ?? []).join(', '));
+  const [yearText, setYearText] = useState((baseQuery.years ?? []).join(', '));
+  const [minRating, setMinRating] = useState(baseQuery.minCommunityRating ?? 0);
+  const [is4K, setIs4K] = useState(baseQuery.is4K ?? false);
+  const [hasSubtitles, setHasSubtitles] = useState(baseQuery.hasSubtitles ?? false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
-    setSortBy('SortName');
-    setDescending(false);
+    setSortBy(initialSort);
+    setDescending(initialDescending);
     setFilter(initialFilter);
-  }, [title, initialFilter]);
+    setMediaType(fixedType);
+    setGenreText((baseQuery.genres ?? []).join(', '));
+    setYearText((baseQuery.years ?? []).join(', '));
+    setMinRating(baseQuery.minCommunityRating ?? 0);
+    setIs4K(baseQuery.is4K ?? false);
+    setHasSubtitles(baseQuery.hasSubtitles ?? false);
+  }, [title, baseQueryKey]);
 
   const changeQuery = async (
     nextSort: CatalogSort,
     nextDescending: boolean,
-    nextFilter: CatalogFilter
+    nextFilter: CatalogFilter,
+    nextMediaType = mediaType
   ) => {
     const state = useAppStore.getState();
     state.setBusy(true);
     try {
+      const genres = genreText.split(',').map((value) => value.trim()).filter(Boolean);
+      const years = yearText.split(',').map(Number).filter((value) => Number.isInteger(value) && value >= 1800 && value <= 3000);
       state.setPage(await window.jellyClient.getItems({
-        parentId,
-        searchTerm,
+        parentId: baseQuery.parentId ?? null,
+        searchTerm: baseQuery.searchTerm ?? '',
         startIndex: 0,
         limit: 150,
-        includeItemTypes: searchTerm || initialFilter === 'favorite'
-          ? ['Movie', 'Series', 'Season', 'Episode', 'Video', 'BoxSet']
-          : [],
+        includeItemTypes: nextMediaType === 'all'
+          ? baseQuery.includeItemTypes ?? []
+          : [nextMediaType],
         sortBy: nextSort,
         sortDescending: nextDescending,
-        filter: nextFilter
+        filter: nextFilter,
+        genres: genres.length > 0 ? genres : undefined,
+        years: years.length > 0 ? years : undefined,
+        personIds: baseQuery.personIds,
+        minCommunityRating: minRating > 0 ? minRating : undefined,
+        is4K: is4K || undefined,
+        hasSubtitles: hasSubtitles || undefined
       }));
     } catch (error) {
       state.addNotice('error', friendlyError(error));
@@ -677,6 +894,23 @@ function CatalogView({
               <option value="favorite">Favorites</option>
             </select>
           </label>
+          {!containerOnly ? (
+            <label>
+              <span>Type</span>
+              <select value={mediaType} onChange={(event) => {
+                const value = event.target.value;
+                setMediaType(value);
+                void changeQuery(sortBy, descending, filter, value);
+              }}>
+                <option value="all">All video</option>
+                <option value="Movie">Movies</option>
+                <option value="Series">Series</option>
+                <option value="Episode">Episodes</option>
+                <option value="Video">Videos</option>
+                <option value="BoxSet">Collections</option>
+              </select>
+            </label>
+          ) : null}
           <label>
             <span>Sort</span>
             <select value={sortBy} onChange={(event) => {
@@ -690,6 +924,7 @@ function CatalogView({
               <option value="ProductionYear">Year</option>
               <option value="CommunityRating">Rating</option>
               <option value="Runtime">Runtime</option>
+              <option value="DatePlayed">Last watched</option>
             </select>
           </label>
           <button onClick={() => {
@@ -697,20 +932,39 @@ function CatalogView({
             setDescending(value);
             void changeQuery(sortBy, value, filter);
           }}>{descending ? 'Descending' : 'Ascending'}</button>
+          {!containerOnly ? <button className={advancedOpen ? 'is-active' : ''} onClick={() => setAdvancedOpen((value) => !value)}>Filters</button> : null}
           <span>{total} items</span>
         </div>
       </header>
+      {advancedOpen && !containerOnly ? (
+        <section className="catalog-filters">
+          <label className="field"><span>Genres</span><input value={genreText} onChange={(event) => setGenreText(event.target.value)} placeholder="Drama, Science Fiction" /></label>
+          <label className="field"><span>Years</span><input value={yearText} onChange={(event) => setYearText(event.target.value)} placeholder="2024, 2025" /></label>
+          <label className="field"><span>Minimum rating</span><select value={minRating} onChange={(event) => setMinRating(Number(event.target.value))}><option value={0}>Any</option><option value={6}>6+</option><option value={7}>7+</option><option value={8}>8+</option><option value={9}>9+</option></select></label>
+          <label className="catalog-check"><input type="checkbox" checked={is4K} onChange={(event) => setIs4K(event.target.checked)} /><span>4K only</span></label>
+          <label className="catalog-check"><input type="checkbox" checked={hasSubtitles} onChange={(event) => setHasSubtitles(event.target.checked)} /><span>Has subtitles</span></label>
+          <button className="button button--primary" onClick={() => void changeQuery(sortBy, descending, filter)}>Apply filters</button>
+        </section>
+      ) : null}
       {items.length > 0 ? (
         <div className="media-grid">
           {items.map((item) => (
-            <MediaCard key={item.id} item={item} onOpen={onOpen} onPlay={onPlay} />
+            <MediaCard
+              key={`${item.id}-${item.playlistItemId ?? ''}`}
+              item={item}
+              onOpen={onOpen}
+              onPlay={onPlay}
+              onFavorite={onFavorite}
+              onPlayed={onPlayed}
+              onRestart={onRestart}
+            />
           ))}
         </div>
       ) : !busy ? (
         <div className="empty-state">
           <Search />
-          <h2>No playable titles found</h2>
-          <p>This view has no playable video yet.</p>
+          <h2>No titles found</h2>
+          <p>Try changing the filters or choose another library.</p>
         </div>
       ) : null}
     </div>
@@ -800,23 +1054,106 @@ async function loadItems(library: LibraryView, searchTerm: string): Promise<void
 }
 
 async function loadFavorites(): Promise<void> {
-  const state = useAppStore.getState();
-  state.setBusy(true);
-  state.setView({ kind: 'favorites' });
-  try {
-    state.setPage(await window.jellyClient.getItems({
-      parentId: null,
-      searchTerm: '',
-      startIndex: 0,
-      limit: 150,
+  return loadSpecialCatalog({
+    view: { kind: 'favorites' },
+    query: {
       includeItemTypes: ['Movie', 'Series', 'Season', 'Episode', 'Video', 'BoxSet'],
       sortBy: 'SortName',
       sortDescending: false,
       filter: 'favorite'
+    }
+  });
+}
+
+async function loadSpecialCatalog({
+  view,
+  query
+}: {
+  view: MainView;
+  query: Partial<CatalogQuery>;
+}): Promise<void> {
+  const state = useAppStore.getState();
+  state.setBusy(true);
+  state.setView(view);
+  try {
+    state.setPage(await window.jellyClient.getItems({
+      parentId: query.parentId ?? null,
+      searchTerm: query.searchTerm ?? '',
+      startIndex: 0,
+      limit: 150,
+      includeItemTypes: query.includeItemTypes ?? [
+        'Movie',
+        'Series',
+        'Season',
+        'Episode',
+        'Video',
+        'BoxSet'
+      ],
+      ...(query.sortBy ? { sortBy: query.sortBy } : {}),
+      ...(query.sortDescending !== undefined ? { sortDescending: query.sortDescending } : {}),
+      ...(query.filter ? { filter: query.filter } : {}),
+      ...(query.genres ? { genres: query.genres } : {}),
+      ...(query.years ? { years: query.years } : {}),
+      ...(query.personIds ? { personIds: query.personIds } : {}),
+      ...(query.minCommunityRating !== undefined ? { minCommunityRating: query.minCommunityRating } : {}),
+      ...(query.is4K !== undefined ? { is4K: query.is4K } : {}),
+      ...(query.hasSubtitles !== undefined ? { hasSubtitles: query.hasSubtitles } : {})
     }));
   } catch (error) {
     state.addNotice('error', friendlyError(error));
   } finally {
     state.setBusy(false);
   }
+}
+
+function catalogTitle(view: MainView): string {
+  switch (view.kind) {
+    case 'library': return view.library.name;
+    case 'search': return `Results for “${view.query}”`;
+    case 'favorites': return 'My List';
+    case 'history': return 'Recently watched';
+    case 'playlists': return 'Playlists';
+    case 'collections': return 'Collections';
+    case 'genre': return view.genre;
+    case 'person': return view.name;
+    default: return 'Library';
+  }
+}
+
+function catalogBaseQuery(view: MainView): Partial<CatalogQuery> {
+  switch (view.kind) {
+    case 'library':
+      return { parentId: view.library.id };
+    case 'search':
+      return {
+        searchTerm: view.query,
+        includeItemTypes: ['Movie', 'Series', 'Season', 'Episode', 'Video', 'BoxSet']
+      };
+    case 'favorites':
+      return {
+        filter: 'favorite',
+        includeItemTypes: ['Movie', 'Series', 'Season', 'Episode', 'Video', 'BoxSet']
+      };
+    case 'history':
+      return {
+        filter: 'played',
+        sortBy: 'DatePlayed',
+        sortDescending: true,
+        includeItemTypes: ['Movie', 'Episode', 'Video']
+      };
+    case 'playlists':
+      return { includeItemTypes: ['Playlist'] };
+    case 'collections':
+      return { includeItemTypes: ['BoxSet'] };
+    case 'genre':
+      return { genres: [view.genre] };
+    case 'person':
+      return { personIds: [view.id] };
+    default:
+      return {};
+  }
+}
+
+function reportListError(error: unknown): void {
+  useAppStore.getState().addNotice('error', friendlyError(error));
 }

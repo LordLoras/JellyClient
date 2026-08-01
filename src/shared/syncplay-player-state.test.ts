@@ -27,6 +27,9 @@ describe('SyncPlay player readiness', () => {
     playedPercentage: 0,
     isPlayed: false,
     isFavorite: false,
+    lastPlayedDate: null,
+    unplayedItemCount: null,
+    playlistItemId: null,
     isFolder: false,
     canPlay: true,
     mediaFormat: {

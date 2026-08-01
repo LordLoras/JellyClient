@@ -9,11 +9,26 @@ const syncApi = vi.hoisted(() => ({
   syncPlaySeek: vi.fn(async () => undefined),
   syncPlayStop: vi.fn(async () => undefined),
   syncPlayReady: vi.fn(async () => undefined),
-  syncPlayBuffering: vi.fn(async () => undefined)
+  syncPlayBuffering: vi.fn(async () => undefined),
+  syncPlayJoinGroup: vi.fn(async () => undefined),
+  syncPlayPing: vi.fn(async () => undefined)
+}));
+
+const timeApi = vi.hoisted(() => ({
+  getUtcTime: vi.fn(async () => ({
+    data: {
+      RequestReceptionTime: new Date(Date.now()).toISOString(),
+      ResponseTransmissionTime: new Date(Date.now()).toISOString()
+    }
+  }))
 }));
 
 vi.mock('@jellyfin/sdk/lib/utils/api/sync-play-api.js', () => ({
   getSyncPlayApi: () => syncApi
+}));
+
+vi.mock('@jellyfin/sdk/lib/utils/api/time-sync-api.js', () => ({
+  getTimeSyncApi: () => timeApi
 }));
 
 import { SyncPlayService } from './syncplay-service.js';
@@ -64,7 +79,8 @@ function subject() {
     suppressNativeControlRelay(
       type: 'pause' | 'seek' | 'both',
       durationMs?: number,
-      pauseValue?: boolean | null
+      pauseValue?: boolean | null,
+      seekTargetSeconds?: number | null
     ): void;
     processCommand(command: Record<string, unknown>): void;
     processQueue(queue: Record<string, unknown>): Promise<void>;
@@ -143,6 +159,23 @@ describe('SyncPlay native MPV controls', () => {
     await vi.runAllTimersAsync();
 
     expect(syncApi.syncPlaySeek).not.toHaveBeenCalled();
+  });
+
+  it('does not discard a different user seek during remote-seek suppression', async () => {
+    const { internal, mpv } = subject();
+    internal.suppressNativeControlRelay('seek', 750, null, 75);
+    mpv.state.positionSeconds = 75;
+    mpv.emit('seek');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(syncApi.syncPlaySeek).not.toHaveBeenCalled();
+
+    mpv.state.positionSeconds = 120;
+    mpv.emit('seek');
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(syncApi.syncPlaySeek).toHaveBeenCalledWith({
+      seekRequestDto: { PositionTicks: 1_200_000_000 }
+    });
   });
 
   it('suppresses only the pause value produced by the remote command', async () => {
@@ -305,6 +338,101 @@ describe('SyncPlay native MPV controls', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(playback.playLocal).toHaveBeenCalledOnce();
+    expect(service.state.membership).toBe('joined');
+  });
+
+  it('reannounces membership and player readiness during a manual resync', async () => {
+    const { service } = subject();
+
+    const state = await service.resync();
+
+    expect(syncApi.syncPlayJoinGroup).toHaveBeenCalledWith({
+      joinGroupRequestDto: { GroupId: 'group-1' }
+    });
+    expect(timeApi.getUtcTime).toHaveBeenCalledTimes(8);
+    expect(syncApi.syncPlayBuffering).toHaveBeenCalledOnce();
+    expect(syncApi.syncPlayReady).toHaveBeenCalledOnce();
+    expect(state.membership).toBe('joined');
+    expect(state.error).toBeNull();
+  });
+
+  it('continuously corrects hard drift after the initial start window', async () => {
+    const { internal, mpv, playback } = subject();
+    mpv.state = { ...mpv.state, positionSeconds: 10, paused: true };
+    const now = new Date(Date.now()).toISOString();
+    internal.processCommand({
+      Command: 'Unpause',
+      GroupId: 'group-1',
+      PlaylistItemId: 'playlist-1',
+      PositionTicks: 100_000_000,
+      When: now,
+      EmittedAt: now
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    playback.seekLocal.mockClear();
+
+    mpv.state = {
+      ...mpv.state,
+      paused: false,
+      status: 'playing',
+      positionSeconds: 10.2
+    };
+    await vi.advanceTimersByTimeAsync(2_100);
+    mpv.emit('state', mpv.state);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(playback.seekLocal).toHaveBeenCalledWith(expect.any(Number));
+    const lastSeek = (
+      playback.seekLocal.mock.calls as unknown as Array<[number]>
+    ).at(-1)?.[0] ?? 0;
+    expect(lastSeek).toBeGreaterThan(12.5);
+  });
+
+  it('keeps only the newest command across randomized rapid command bursts', async () => {
+    for (let seed = 1; seed <= 40; seed += 1) {
+      vi.clearAllMocks();
+      const { internal, playback, service } = subject();
+      const timestamp = new Date(Date.now()).toISOString();
+      let value = seed;
+      for (let index = 0; index < 24; index += 1) {
+        value = (value * 16_807) % 2_147_483_647;
+        const command = ['Pause', 'Unpause', 'Seek'][value % 3]!;
+        internal.processCommand({
+          Command: command,
+          GroupId: 'group-1',
+          PlaylistItemId: 'playlist-1',
+          PositionTicks: (index + 1) * 10_000_000,
+          When: timestamp,
+          EmittedAt: timestamp
+        });
+      }
+      internal.processCommand({
+        Command: 'Seek',
+        GroupId: 'group-1',
+        PlaylistItemId: 'playlist-1',
+        PositionTicks: 777_000_000,
+        When: timestamp,
+        EmittedAt: timestamp
+      });
+      await vi.advanceTimersByTimeAsync(1_600);
+
+      expect(playback.seekLocal).toHaveBeenLastCalledWith(77.7);
+      expect(service.state.membership).toBe('joined');
+      expect(service.state.error).toBeNull();
+    }
+  });
+
+  it('continues serializing controls after a transient request failure', async () => {
+    const { service } = subject();
+    syncApi.syncPlaySeek.mockRejectedValueOnce(new Error('temporary failure'));
+
+    await expect(service.action({
+      type: 'seek',
+      positionTicks: 250_000_000
+    })).rejects.toThrow('temporary failure');
+    await service.action({ type: 'pause' });
+
+    expect(syncApi.syncPlayPause).toHaveBeenCalledOnce();
     expect(service.state.membership).toBe('joined');
   });
 });

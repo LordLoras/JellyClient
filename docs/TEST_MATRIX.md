@@ -1,7 +1,7 @@
 # JellyClient Windows test matrix
 
-Status: initial acceptance matrix
-Date: 2026-07-30
+Status: active acceptance matrix
+Date: 2026-08-01
 
 ## 1. Reference environment
 
@@ -188,8 +188,9 @@ Initial measurable thresholds:
 
 ## 9. Audio-track tests
 
-The Windows client decodes to PC speakers. Passthrough is disabled even if the source
-codec and TV advertise it.
+Decoded PCM is the default. Encoded passthrough can be enabled per format when
+the selected HDMI endpoint and downstream television, receiver, or soundbar
+support it.
 
 | ID | Test | Expected result | Gate |
 |---|---|---|---|
@@ -200,7 +201,7 @@ codec and TV advertise it.
 | AUD-05 | DTS/TrueHD track | Local decode/downmix succeeds when bundled MPV supports it; otherwise explicit fallback | A |
 | AUD-06 | Seek after audio switch | Selected track persists and remains synchronized | A |
 | AUD-07 | Next episode | Preference rule is applied without confusing Jellyfin and MPV track IDs | A |
-| AUD-08 | HDMI passthrough | Not exposed in current settings | Later |
+| AUD-08 | HDMI passthrough | Selected AC-3, E-AC-3, TrueHD, DTS, or DTS-HD formats reach a compatible endpoint; unsupported combinations fall back to decoded PCM with a clear status | B |
 
 ## 10. Jellyfin playback tests
 
@@ -292,6 +293,22 @@ SyncPlay target after clock warm-up and outside buffering/seeks:
 | REL-06 | MPV IPC flood/high-frequency position | Events are coalesced; queues remain bounded | A |
 | REL-07 | Renderer compromise check | `nodeIntegration` off, context isolation on, allowlisted preload API | A |
 | REL-08 | Support bundle | Contains versions/events but no credentials or raw auth URLs | A |
+
+### Automated regression coverage
+
+The repository test suite covers settings migration and validation, MPV IPC
+generation handling, playback lifecycle guards, audio endpoint parsing,
+Jellyfin remote-command routing, and SyncPlay scheduling and drift correction.
+SyncPlay also runs deterministic randomized rapid-command bursts and verifies
+that only the newest command is applied, the room remains joined, and the
+control queue still works after a transient request failure.
+
+The Electron test suite covers sign-in and saved-session restoration, offline
+startup, default subtitle preferences, empty-folder filtering, configurable
+home data, library-management navigation, card actions, Continue Watching
+removal and Undo, and first-run visual capture. These tests complement rather
+than replace the physical HDR, audio, subtitle, multi-client, and soak checks
+listed above.
 
 ## 13. Gate definitions
 

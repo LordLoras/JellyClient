@@ -1,5 +1,5 @@
 export const APP_NAME = 'JellyClient';
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '1.2.0';
 export const TICKS_PER_SECOND = 10_000_000;
 
 export type ConnectionStatus =
@@ -35,14 +35,36 @@ export interface MpvAudioDevice {
   id: string;
   description: string;
 }
+export interface WindowsDisplay {
+  id: string;
+  name: string;
+  primary: boolean;
+  width: number;
+  height: number;
+}
 export type CatalogSort =
   | 'SortName'
   | 'DateCreated'
   | 'PremiereDate'
   | 'ProductionYear'
   | 'CommunityRating'
-  | 'Runtime';
+  | 'Runtime'
+  | 'DatePlayed';
 export type CatalogFilter = 'all' | 'unplayed' | 'played' | 'favorite';
+
+export type HomeSectionId =
+  | 'resume'
+  | 'nextUp'
+  | 'favorites'
+  | 'recentlyPlayed'
+  | 'recommended'
+  | 'latest'
+  | 'libraries';
+
+export interface HomeSettings {
+  sectionOrder: HomeSectionId[];
+  hiddenSections: HomeSectionId[];
+}
 
 export interface ServerProfile {
   protocol: 'http' | 'https';
@@ -98,6 +120,7 @@ export interface PlayerSettings {
   audioOutputMode: AudioOutputMode;
   audioPassthrough: AudioPassthroughSettings;
   alwaysOnTop: boolean;
+  preferredDisplayId: string;
   fullscreenOnPlay: boolean;
   autoEnableSubtitles: boolean;
   preferredAudioLanguage: string;
@@ -124,6 +147,7 @@ export interface SyncPlaySettings {
 export interface AppSettings {
   player: PlayerSettings;
   syncPlay: SyncPlaySettings;
+  home: HomeSettings;
 }
 
 export interface UserSummary {
@@ -180,6 +204,9 @@ export interface MediaItem {
   playedPercentage: number;
   isPlayed: boolean;
   isFavorite: boolean;
+  lastPlayedDate: string | null;
+  unplayedItemCount: number | null;
+  playlistItemId: string | null;
   isFolder: boolean;
   canPlay: boolean;
   mediaFormat: MediaFormatInfo;
@@ -238,6 +265,9 @@ export interface HomePayload {
   libraries: LibraryView[];
   resume: MediaItem[];
   nextUp: MediaItem[];
+  favorites: MediaItem[];
+  recentlyPlayed: MediaItem[];
+  recommended: MediaItem[];
   latest: MediaItem[];
 }
 
@@ -263,6 +293,18 @@ export interface ItemDetails extends MediaItem {
   playbackSources: PlaybackSourceOption[];
   specialFeatures: MediaItem[];
   localTrailers: MediaItem[];
+  children: MediaItem[];
+  similarItems: MediaItem[];
+}
+
+export type CatalogContainerKind = 'playlist' | 'collection';
+
+export interface CatalogContainer {
+  id: string;
+  name: string;
+  kind: CatalogContainerKind;
+  itemCount: number;
+  imageUrl: string | null;
 }
 
 export interface TrackInfo {
@@ -404,6 +446,12 @@ export interface CatalogQuery {
   sortBy?: CatalogSort | undefined;
   sortDescending?: boolean | undefined;
   filter?: CatalogFilter | undefined;
+  genres?: string[] | undefined;
+  years?: number[] | undefined;
+  personIds?: string[] | undefined;
+  minCommunityRating?: number | undefined;
+  is4K?: boolean | undefined;
+  hasSubtitles?: boolean | undefined;
 }
 
 export interface PlayMediaInput {
@@ -441,10 +489,16 @@ export interface JellyClientApi {
   disconnect(): Promise<ConnectionState>;
   getHome(): Promise<HomePayload>;
   discardPlaybackProgress(itemId: string): Promise<HomePayload>;
+  restorePlaybackProgress(itemId: string, positionTicks: number): Promise<HomePayload>;
   getItems(query: CatalogQuery): Promise<ItemsPage>;
   getItem(itemId: string): Promise<ItemDetails>;
   setFavorite(itemId: string, favorite: boolean): Promise<ItemDetails>;
   setPlayed(itemId: string, played: boolean): Promise<ItemDetails>;
+  listContainers(kind: CatalogContainerKind): Promise<CatalogContainer[]>;
+  createContainer(kind: CatalogContainerKind, name: string, itemId: string): Promise<CatalogContainer[]>;
+  addToContainer(kind: CatalogContainerKind, containerId: string, itemId: string): Promise<void>;
+  removeFromContainer(kind: CatalogContainerKind, containerId: string, entryId: string): Promise<void>;
+  movePlaylistItem(playlistId: string, entryId: string, newIndex: number): Promise<void>;
   play(input: PlayMediaInput): Promise<PlaybackState>;
   playbackAction(
     action:
@@ -462,11 +516,13 @@ export interface JellyClientApi {
       | { type: 'chapter'; index: number }
       | { type: 'cancel-post-play' }
       | { type: 'play-next' }
+      | { type: 'retry' }
       | { type: 'select-track'; trackType: 'audio' | 'subtitle'; id: number | null }
   ): Promise<PlaybackState>;
   copyDebugReport(report: string): Promise<void>;
   probeMpv(): Promise<MpvCapability>;
   listAudioDevices(): Promise<MpvAudioDevice[]>;
+  listDisplays(): Promise<WindowsDisplay[]>;
   saveSettings(settings: AppSettings): Promise<AppSettings>;
   chooseMpv(): Promise<MpvCapability>;
   openConfigFolder(): Promise<void>;
@@ -482,5 +538,6 @@ export interface JellyClientApi {
       | { type: 'stop' }
       | { type: 'seek'; positionTicks: number }
   ): Promise<SyncPlayState>;
+  resyncSyncPlay(): Promise<SyncPlayState>;
   subscribe(listener: (event: ClientEvent) => void): () => void;
 }

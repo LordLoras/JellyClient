@@ -74,9 +74,12 @@ export class SyncPlayService {
   private suppressNativePauseUntil = 0;
   private suppressNativeSeekUntil = 0;
   private suppressedPauseValue: boolean | null = null;
+  private suppressedSeekTargetSeconds: number | null = null;
   private queueLoadKey: string | null = null;
   private timelineAnchor: PlaybackTimelineAnchor | null = null;
   private lastDriftPublishedAt = 0;
+  private driftCorrectionInFlight = false;
+  private lastAutomaticCorrectionAt = 0;
 
   constructor(
     jellyfin: JellyfinService,
@@ -317,6 +320,42 @@ export class SyncPlayService {
     });
   }
 
+  resync(): Promise<SyncPlayState> {
+    return this.serialize(async () => {
+      const groupId = this.stateValue.currentGroup?.id;
+      if (this.stateValue.membership !== 'joined' || !groupId) {
+        throw new Error('Join a SyncPlay group before requesting a resync.');
+      }
+      await this.socket.waitUntilConnected();
+      this.cancelScheduledCommand();
+      this.clearSpeedCorrection();
+      this.pendingCommand = null;
+      this.lastCommandEmittedAtMs = 0;
+      this.lastCommandKey = null;
+      this.lastBuffering = null;
+      this.lastReadyRequest = null;
+      this.timelineAnchor = null;
+      this.lastDriftPublishedAt = 0;
+      this.lastAutomaticCorrectionAt = 0;
+      this.driftCorrectionInFlight = false;
+      await getSyncPlayApi(this.jellyfin.api).syncPlayJoinGroup({
+        joinGroupRequestDto: { GroupId: groupId }
+      });
+      await this.synchronizeClock();
+      if (this.playerReadyForCurrentQueue()) {
+        await this.sendBuffering();
+        this.lastBuffering = null;
+        await this.sendReady();
+      }
+      this.setState({
+        ...this.stateValue,
+        driftMs: 0,
+        error: null
+      });
+      return this.state;
+    });
+  }
+
   reset(): void {
     this.invalidatePlaybackWork();
     this.cancelScheduledCommand();
@@ -328,6 +367,8 @@ export class SyncPlayService {
     this.lastReadyRequest = null;
     this.timelineAnchor = null;
     this.lastDriftPublishedAt = 0;
+    this.lastAutomaticCorrectionAt = 0;
+    this.driftCorrectionInFlight = false;
     this.clearNativeControlRelays();
     this.setState(structuredClone(initialSyncPlayState));
   }
@@ -573,7 +614,7 @@ export class SyncPlayService {
         const driftMs =
           (this.mpv.state.positionSeconds - targetSeconds) * 1000;
         if (Math.abs(driftMs) >= hardSeekThresholdMs) {
-          this.suppressNativeControlRelay('seek');
+          this.suppressNativeControlRelay('seek', 1_500, null, targetSeconds);
           await this.playback.seekLocal(targetSeconds);
           if (generation !== this.commandGeneration) return;
         } else if (Math.abs(driftMs) >= softCorrectionThresholdMs) {
@@ -607,7 +648,12 @@ export class SyncPlayService {
         this.suppressNativeControlRelay('pause', 750, true);
         await this.playback.pauseLocal();
         if (generation !== this.commandGeneration) return;
-        this.suppressNativeControlRelay('seek');
+        this.suppressNativeControlRelay(
+          'seek',
+          1_500,
+          null,
+          scheduledPosition / TICKS_PER_SECOND
+        );
         await this.playback.seekLocal(scheduledPosition / TICKS_PER_SECOND);
         this.setTimelineAnchor(
           scheduledPosition / TICKS_PER_SECOND,
@@ -619,14 +665,15 @@ export class SyncPlayService {
       case 'Seek':
         await this.resetPlaybackSpeed();
         if (generation !== this.commandGeneration) return;
-        this.suppressNativeControlRelay('seek');
-        await this.playback.seekLocal(scheduledPosition / TICKS_PER_SECOND);
+        {
+          const playing = !this.mpv.state.paused;
+          const targetSeconds = scheduledPosition / TICKS_PER_SECOND;
+          this.suppressNativeControlRelay('seek', 1_500, null, targetSeconds);
+          await this.playback.seekLocal(targetSeconds);
+          if (generation !== this.commandGeneration) return;
+          this.setTimelineAnchor(targetSeconds, Date.now(), playing);
+        }
         if (generation !== this.commandGeneration) return;
-        this.setTimelineAnchor(
-          scheduledPosition / TICKS_PER_SECOND,
-          Date.now(),
-          false
-        );
         await this.waitForPlayerRestart();
         if (generation !== this.commandGeneration) return;
         this.publishMeasuredDrift(true);
@@ -667,6 +714,7 @@ export class SyncPlayService {
         this.stateValue.groupQueueItemId
       )
     ) {
+      void this.correctOngoingDrift();
       if (this.lastBuffering !== false) await this.sendReady();
       this.flushPendingCommand();
     }
@@ -809,6 +857,8 @@ export class SyncPlayService {
     this.lastReadyRequest = null;
     this.timelineAnchor = null;
     this.lastDriftPublishedAt = 0;
+    this.lastAutomaticCorrectionAt = 0;
+    this.driftCorrectionInFlight = false;
     this.clearNativeControlRelays();
     this.setState({
       ...this.stateValue,
@@ -941,10 +991,19 @@ export class SyncPlayService {
       : this.suppressNativeSeekUntil;
     const suppressionApplies = type === 'seek' ||
       paused === this.suppressedPauseValue;
+    const seekSuppressionApplies = type !== 'seek' ||
+      this.suppressedSeekTargetSeconds === null ||
+      Math.abs(
+        this.mpv.state.positionSeconds - this.suppressedSeekTargetSeconds
+      ) <= 1;
     return this.stateValue.membership === 'joined' &&
       Boolean(this.stateValue.playlistItemId) &&
       this.mpv.isMediaLoaded &&
-      (Date.now() >= suppressedUntil || !suppressionApplies);
+      (
+        Date.now() >= suppressedUntil ||
+        !suppressionApplies ||
+        !seekSuppressionApplies
+      );
   }
 
   private async relayNativeControl(
@@ -970,7 +1029,8 @@ export class SyncPlayService {
   private suppressNativeControlRelay(
     type: 'pause' | 'seek' | 'both',
     durationMs = 750,
-    pauseValue: boolean | null = null
+    pauseValue: boolean | null = null,
+    seekTargetSeconds: number | null = null
   ): void {
     const until = Date.now() + durationMs;
     if (type === 'pause' || type === 'both') {
@@ -985,6 +1045,7 @@ export class SyncPlayService {
         this.suppressNativeSeekUntil,
         until
       );
+      this.suppressedSeekTargetSeconds = seekTargetSeconds;
     }
   }
 
@@ -994,6 +1055,7 @@ export class SyncPlayService {
     this.suppressNativePauseUntil = 0;
     this.suppressNativeSeekUntil = 0;
     this.suppressedPauseValue = null;
+    this.suppressedSeekTargetSeconds = null;
     this.lastObservedPaused = this.mpv.state.paused;
   }
 
@@ -1123,7 +1185,7 @@ export class SyncPlayService {
       ) {
         return;
       }
-      this.suppressNativeControlRelay('seek', 1_500);
+      this.suppressNativeControlRelay('seek', 1_500, null, expectedSeconds);
       void this.playback.seekLocal(expectedSeconds).then(() => {
         if (generation === this.commandGeneration) {
           this.publishMeasuredDrift(true);
@@ -1134,6 +1196,40 @@ export class SyncPlayService {
         );
       });
     }, 750);
+  }
+
+  private async correctOngoingDrift(): Promise<void> {
+    if (
+      this.driftCorrectionInFlight ||
+      this.stateValue.membership !== 'joined' ||
+      this.mpv.state.paused ||
+      !this.playerReadyForCurrentQueue() ||
+      Date.now() - this.lastAutomaticCorrectionAt < 2_000
+    ) {
+      return;
+    }
+    const anchor = this.timelineAnchor;
+    if (!anchor?.playing) return;
+    const now = Date.now();
+    const expectedSeconds = anchor.positionSeconds +
+      Math.max(0, now - anchor.localTargetMs) / 1000;
+    const driftMs = (this.mpv.state.positionSeconds - expectedSeconds) * 1000;
+    if (Math.abs(driftMs) < this.config.settings.syncPlay.hardSeekThresholdMs) {
+      return;
+    }
+    this.driftCorrectionInFlight = true;
+    this.lastAutomaticCorrectionAt = now;
+    this.suppressNativeControlRelay('seek', 1_500, null, expectedSeconds);
+    try {
+      await this.playback.seekLocal(expectedSeconds);
+      this.publishMeasuredDrift(true);
+    } catch (error) {
+      this.warnRecoverable(
+        userFacingError(error, 'Could not restore the shared playback position.')
+      );
+    } finally {
+      this.driftCorrectionInFlight = false;
+    }
   }
 
   private waitFor(

@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.2.0 — 2026-08-01
+
+- Add configurable home rows for Continue Watching, Up Next, My List,
+  recently watched, recommendations, recently added titles, and libraries.
+- Add My List and watch-history views, richer catalog filters, genre and person
+  browsing, series and season contents, and Jellyfin recommendations.
+- Add playlist and collection browsing, creation, item management, and playlist
+  reordering from the item details screen.
+- Add card menus for restarting a title, changing watched state, and managing
+  My List, plus a ten-second undo after removing Continue Watching progress.
+- Add selectable Windows display targeting while retaining automatic display
+  selection as the default.
+- Add retry controls for failed playback and manual SyncPlay resynchronization
+  without leaving the room.
+- Harden SyncPlay against overlapping seeks and rapid command bursts, preserve
+  the playing state across synchronized seeks, and continuously correct large
+  drift after playback starts.
+- Route Jellyfin remote play, pause, stop, and seek commands through the local
+  player or the active SyncPlay room as appropriate.
+- Expand automated coverage to 102 unit tests and 10 desktop tests, including
+  deterministic randomized SyncPlay command bursts, transient server failures,
+  remote-control routing, Continue Watching undo, and offline startup.
+
 ## 1.1.0 — 2026-08-01
 
 - Keep SyncPlay membership alive when MPV loads slowly, retry the latest room

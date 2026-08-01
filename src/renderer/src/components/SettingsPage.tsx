@@ -1,11 +1,16 @@
 import {
+  ArrowDown,
+  ArrowUp,
   Captions,
   ExternalLink,
   FileCog,
   FolderOpen,
   Gauge,
+  Eye,
+  EyeOff,
   MonitorUp,
   RefreshCw,
+  Rows3,
   Save,
   ShieldCheck,
   Volume2
@@ -16,10 +21,22 @@ import {
 } from 'react';
 import type {
   AppSettings,
+  HomeSectionId,
   MpvAudioDevice,
-  MpvCapability
+  MpvCapability,
+  WindowsDisplay
 } from '@shared/contracts.js';
 import { friendlyError } from '../format';
+
+const HOME_SECTION_LABELS: Record<HomeSectionId, string> = {
+  resume: 'Continue watching',
+  nextUp: 'Up next',
+  favorites: 'My List',
+  recentlyPlayed: 'Recently watched',
+  recommended: 'Recommended',
+  latest: 'Recently added',
+  libraries: 'Libraries'
+};
 
 interface Props {
   settings: AppSettings;
@@ -43,6 +60,7 @@ export function SettingsPage({
   const [audioDevices, setAudioDevices] = useState<MpvAudioDevice[]>([]);
   const [audioDevicesBusy, setAudioDevicesBusy] = useState(false);
   const [audioDevicesError, setAudioDevicesError] = useState<string | null>(null);
+  const [displays, setDisplays] = useState<WindowsDisplay[]>([]);
   useEffect(() => setDraft(settings), [settings]);
   useEffect(() => {
     let cancelled = false;
@@ -66,6 +84,19 @@ export function SettingsPage({
       cancelled = true;
     };
   }, [mpv.available, mpv.executablePath]);
+  useEffect(() => {
+    let cancelled = false;
+    void window.jellyClient.listDisplays()
+      .then((value) => {
+        if (!cancelled) setDisplays(value);
+      })
+      .catch(() => {
+        if (!cancelled) setDisplays([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const refreshAudioDevices = async () => {
     setAudioDevicesBusy(true);
@@ -111,6 +142,22 @@ export function SettingsPage({
     } finally {
       setBusy(false);
     }
+  };
+
+  const moveHomeSection = (id: HomeSectionId, direction: -1 | 1) => {
+    const order = [...draft.home.sectionOrder];
+    const index = order.indexOf(id);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= order.length) return;
+    [order[index], order[target]] = [order[target]!, order[index]!];
+    setDraft({ ...draft, home: { ...draft.home, sectionOrder: order } });
+  };
+
+  const toggleHomeSection = (id: HomeSectionId) => {
+    const hidden = draft.home.hiddenSections.includes(id)
+      ? draft.home.hiddenSections.filter((candidate) => candidate !== id)
+      : [...draft.home.hiddenSections, id];
+    setDraft({ ...draft, home: { ...draft.home, hiddenSections: hidden } });
   };
 
   return (
@@ -185,6 +232,24 @@ export function SettingsPage({
               </select>
             </label>
           </div>
+          <label className="field">
+            <span>Preferred display</span>
+            <select
+              value={draft.player.preferredDisplayId}
+              onChange={(event) => setDraft({
+                ...draft,
+                player: { ...draft.player, preferredDisplayId: event.target.value }
+              })}
+            >
+              <option value="auto">Current display / move manually</option>
+              {displays.map((display) => (
+                <option value={display.id} key={display.id}>
+                  {display.name} · {display.width}×{display.height}{display.primary ? ' · primary' : ''}
+                </option>
+              ))}
+            </select>
+            <small>Automatic HDR follows MPV on the display where its window is shown. Choose a display only when playback should always open there.</small>
+          </label>
           <div className="toggle-stack">
             <Toggle
               label="Hardware decoding"
@@ -544,6 +609,26 @@ export function SettingsPage({
                 player: { ...draft.player, autoPlayNext: value }
               })}
             />
+          </div>
+        </section>
+
+        <section className="settings-card settings-card--full">
+          <header>
+            <span className="icon-plate"><Rows3 /></span>
+            <div><h2>Home screen</h2><p>Choose which rows appear and in what order.</p></div>
+          </header>
+          <div className="home-layout-list">
+            {draft.home.sectionOrder.map((id, index) => {
+              const hidden = draft.home.hiddenSections.includes(id);
+              return (
+                <div key={id} className={hidden ? 'is-hidden' : ''}>
+                  <span><strong>{HOME_SECTION_LABELS[id]}</strong><small>{hidden ? 'Hidden' : 'Visible'}</small></span>
+                  <button className="icon-button" aria-label={`Move ${HOME_SECTION_LABELS[id]} up`} disabled={index === 0} onClick={() => moveHomeSection(id, -1)}><ArrowUp /></button>
+                  <button className="icon-button" aria-label={`Move ${HOME_SECTION_LABELS[id]} down`} disabled={index === draft.home.sectionOrder.length - 1} onClick={() => moveHomeSection(id, 1)}><ArrowDown /></button>
+                  <button className="icon-button" aria-label={`${hidden ? 'Show' : 'Hide'} ${HOME_SECTION_LABELS[id]}`} onClick={() => toggleHomeSection(id)}>{hidden ? <EyeOff /> : <Eye />}</button>
+                </div>
+              );
+            })}
           </div>
         </section>
 

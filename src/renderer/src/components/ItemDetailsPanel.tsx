@@ -1,10 +1,14 @@
 import {
+  ArrowDown,
+  ArrowUp,
   Clock3,
   Check,
   Heart,
   ListVideo,
+  ListPlus,
   Play,
   Star,
+  Trash2,
   Users,
   X
 } from 'lucide-react';
@@ -25,6 +29,12 @@ interface Props {
   onPlay(input: PlayMediaInput): void;
   onWatchTogether(): void;
   onOpen(item: MediaItem): void;
+  onPlayItem(item: MediaItem): void;
+  onAddToList(item: MediaItem): void;
+  onBrowseGenre(genre: string): void;
+  onBrowsePerson(id: string, name: string): void;
+  onRemoveChild(parent: ItemDetails, child: MediaItem): void;
+  onMoveChild(parent: ItemDetails, child: MediaItem, newIndex: number): void;
   onUpdated(item: ItemDetails): void;
   onError(error: unknown): void;
 }
@@ -35,6 +45,12 @@ export function ItemDetailsPanel({
   onPlay,
   onWatchTogether,
   onOpen,
+  onPlayItem,
+  onAddToList,
+  onBrowseGenre,
+  onBrowsePerson,
+  onRemoveChild,
+  onMoveChild,
   onUpdated,
   onError
 }: Props) {
@@ -136,7 +152,42 @@ export function ItemDetailsPanel({
             >
               <Check /> {item.isPlayed ? 'Watched' : 'Mark watched'}
             </button>
+            <button className="button button--glass" onClick={() => onAddToList(item)}>
+              <ListPlus /> Add to list
+            </button>
           </div>
+          {item.children.length > 0 && (
+            <section className="detail-section detail-section--children">
+              <header>
+                <span><strong>{item.type === 'Series' ? 'Seasons' : item.type === 'Season' ? 'Episodes' : 'Titles'}</strong><small>{item.children.length} items</small></span>
+                {item.children.some((child) => child.canPlay && !child.isPlayed) ? (
+                  <button className="button button--glass" onClick={() => {
+                    const next = item.children.find((child) => child.canPlay && !child.isPlayed);
+                    if (next) onPlayItem(next);
+                  }}><Play /> Play next unwatched</button>
+                ) : null}
+              </header>
+              <div className="detail-child-grid">
+                {item.children.map((child, index) => (
+                  <article className="detail-child-card" key={`${child.id}-${child.playlistItemId ?? ''}`}>
+                    <button onClick={() => onOpen(child)}>
+                      <span>{child.imageUrl ? <img src={child.imageUrl} alt="" /> : <Play />}</span>
+                      <div><strong>{child.indexLabel ? `${child.indexLabel} · ` : ''}{child.name}</strong><small>{child.isPlayed ? 'Watched' : child.unplayedItemCount ? `${child.unplayedItemCount} unwatched` : child.type}</small></div>
+                    </button>
+                    {item.type === 'Playlist' || item.type === 'BoxSet' ? (
+                      <button className="detail-child-card__remove" aria-label={`Remove ${child.name} from ${item.name}`} onClick={() => onRemoveChild(item, child)}><Trash2 /></button>
+                    ) : null}
+                    {item.type === 'Playlist' ? (
+                      <span className="detail-child-card__order">
+                        <button disabled={index === 0} aria-label={`Move ${child.name} up`} onClick={() => onMoveChild(item, child, index - 1)}><ArrowUp /></button>
+                        <button disabled={index === item.children.length - 1} aria-label={`Move ${child.name} down`} onClick={() => onMoveChild(item, child, index + 1)}><ArrowDown /></button>
+                      </span>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
           {item.canPlay && item.playbackSources.length > 0 && (
             <section className="playback-options">
               <header><ListVideo /><span><strong>Playback options</strong><small>Choose a file, quality, and starting tracks.</small></span></header>
@@ -241,21 +292,35 @@ export function ItemDetailsPanel({
           {item.genres.length > 0 && (
             <div className="detail-sheet__meta">
               <span>Genres</span>
-              <p>{item.genres.join(' · ')}</p>
+              <p>{item.genres.map((genre) => <button key={genre} onClick={() => onBrowseGenre(genre)}>{genre}</button>)}</p>
             </div>
           )}
           {item.people.length > 0 && (
             <div className="people-strip">
               {item.people.slice(0, 8).map((person) => (
-                <article key={`${person.id}-${person.name}`}>
+                <button key={`${person.id}-${person.name}`} onClick={() => person.id && onBrowsePerson(person.id, person.name)}>
                   <span>
                     {person.imageUrl ? <img src={person.imageUrl} alt="" /> : person.name.slice(0, 1)}
                   </span>
                   <strong>{person.name}</strong>
                   <small>{person.role ?? person.type}</small>
-                </article>
+                </button>
               ))}
             </div>
+          )}
+          {item.similarItems.length > 0 && (
+            <section className="detail-section">
+              <header><span><strong>More like this</strong><small>From Jellyfin</small></span></header>
+              <div className="extra-strip">
+                {item.similarItems.map((similar) => (
+                  <button key={similar.id} onClick={() => onOpen(similar)}>
+                    <span>{similar.imageUrl ? <img src={similar.imageUrl} alt="" /> : <Play />}</span>
+                    <strong>{similar.name}</strong>
+                    <small>{similar.productionYear ?? similar.type}</small>
+                  </button>
+                ))}
+              </div>
+            </section>
           )}
         </div>
       </section>

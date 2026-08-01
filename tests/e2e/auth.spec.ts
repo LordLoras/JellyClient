@@ -37,10 +37,11 @@ const userDataPath = resolve(
 
 const server = createServer(
   (request: IncomingMessage, response: ServerResponse) => {
-    const path = new URL(
+    const url = new URL(
       request.url ?? '/',
       'http://127.0.0.1'
-    ).pathname.toLowerCase();
+    );
+    const path = url.pathname.toLowerCase();
 
     if (path === '/system/info/public') {
       json(response, {
@@ -151,7 +152,89 @@ const server = createServer(
       json(response, []);
       return;
     }
+    if (path === '/movies/recommendations') {
+      json(response, [{
+        BaselineItemName: 'Fixture Series',
+        Items: [{
+          Id: 'recommended-movie',
+          Name: 'Recommended Movie',
+          Type: 'Movie',
+          RunTimeTicks: 5_400_000_000,
+          UserData: { Played: false, IsFavorite: false }
+        }]
+      }]);
+      return;
+    }
+    if (path === '/useritems/resume-item-id/userdata') {
+      if (request.method === 'POST') resumeRemoved = false;
+      json(response, {
+        PlaybackPositionTicks: resumeRemoved ? 0 : 600_000_000,
+        PlayedPercentage: resumeRemoved ? 0 : 20,
+        Played: false,
+        IsFavorite: false
+      });
+      return;
+    }
     if (path === '/items') {
+      const filters = url.searchParams.get('filters') ?? '';
+      const sortBy = url.searchParams.get('sortBy') ?? '';
+      const includeTypes = url.searchParams.get('includeItemTypes') ?? '';
+      if (filters.includes('IsFavorite')) {
+        json(response, {
+          Items: [{
+            Id: 'favorite-movie',
+            Name: 'Favorite Movie',
+            Type: 'Movie',
+            RunTimeTicks: 5_400_000_000,
+            UserData: { Played: false, IsFavorite: true }
+          }],
+          TotalRecordCount: 1
+        });
+        return;
+      }
+      if (filters.includes('IsPlayed') || sortBy.includes('DatePlayed')) {
+        json(response, {
+          Items: [{
+            Id: 'watched-movie',
+            Name: 'Watched Movie',
+            Type: 'Movie',
+            RunTimeTicks: 5_400_000_000,
+            UserData: {
+              Played: true,
+              IsFavorite: false,
+              LastPlayedDate: '2026-07-30T12:00:00Z'
+            }
+          }],
+          TotalRecordCount: 1
+        });
+        return;
+      }
+      if (includeTypes === 'Playlist') {
+        json(response, {
+          Items: [{
+            Id: 'playlist-1',
+            Name: 'Weekend Queue',
+            Type: 'Playlist',
+            IsFolder: true,
+            ChildCount: 2
+          }],
+          TotalRecordCount: 1
+        });
+        return;
+      }
+      if (includeTypes === 'BoxSet') {
+        json(response, {
+          Items: [{
+            Id: 'collection-1',
+            Name: 'Science Fiction',
+            Type: 'BoxSet',
+            IsFolder: true,
+            ChildCount: 3
+          }],
+          TotalRecordCount: 1
+        });
+        return;
+      }
       json(response, {
         Items: [
           {
@@ -338,6 +421,28 @@ test('hides empty filesystem folders from a movie library', async () => {
   await expect(page.getByText('2 items')).toBeVisible();
 });
 
+test('shows Windows library-management views and card actions', async () => {
+  await page.getByRole('button', { name: 'Home' }).click();
+  await expect(page.getByRole('heading', { name: 'My List' })).toBeVisible();
+  await expect(page.getByText('Favorite Movie')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Recently watched' })).toBeVisible();
+  await expect(page.getByText('Watched Movie')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Recommended' })).toBeVisible();
+  await expect(page.getByText('Recommended Movie')).toBeVisible();
+
+  await page.getByRole('button', { name: 'More actions for Paused Episode' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Restart' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Add to My List' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Mark watched' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Playlists' }).click();
+  await expect(page.getByRole('heading', { name: 'Playlists' })).toBeVisible();
+  await expect(page.getByText('Weekend Queue')).toBeVisible();
+  await page.getByRole('button', { name: 'Collections' }).click();
+  await expect(page.getByRole('heading', { name: 'Collections' })).toBeVisible();
+  await expect(page.getByText('Science Fiction')).toBeVisible();
+});
+
 test('can cancel or confirm removing saved progress and keeps Up Next useful', async () => {
   nextEpisodeNumber = 3;
   await page.getByRole('button', { name: 'Home' }).click();
@@ -384,6 +489,10 @@ test('can cancel or confirm removing saved progress and keeps Up Next useful', a
     upNextRail.getByText(/^S03 E03 · Freshly Added Episode/)
   ).toBeVisible();
   expect(resumeRemoved).toBe(true);
+
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect(removePausedEpisode).toBeVisible();
+  expect(resumeRemoved).toBe(false);
 });
 
 test('shows the connection form immediately when the saved server is offline', async () => {

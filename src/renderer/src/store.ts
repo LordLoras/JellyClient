@@ -19,6 +19,11 @@ export type MainView =
   | { kind: 'library'; library: LibraryView }
   | { kind: 'search'; query: string }
   | { kind: 'favorites' }
+  | { kind: 'history' }
+  | { kind: 'playlists' }
+  | { kind: 'collections' }
+  | { kind: 'genre'; genre: string }
+  | { kind: 'person'; id: string; name: string }
   | { kind: 'settings' };
 
 export interface Notice {
@@ -161,6 +166,12 @@ function sameView(left: MainView, right: MainView): boolean {
   }
   if (left.kind === 'search' && right.kind === 'search') {
     return left.query === right.query;
+  }
+  if (left.kind === 'genre' && right.kind === 'genre') {
+    return left.genre === right.genre;
+  }
+  if (left.kind === 'person' && right.kind === 'person') {
+    return left.id === right.id;
   }
   return true;
 }

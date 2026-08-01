@@ -3,6 +3,7 @@ import {
   connectionInputSchema,
   settingsSchema
 } from './schemas.js';
+import type { AppSettings } from './contracts.js';
 import { defaultSettings } from './defaults.js';
 
 describe('IPC validation', () => {
@@ -43,9 +44,14 @@ describe('IPC validation', () => {
     };
     delete legacy.player.autoEnableSubtitles;
     delete legacy.player.preferredSubtitleLanguage;
+    delete legacy.player.preferredDisplayId;
+    delete (legacy as Partial<AppSettings>).home;
 
     const migrated = settingsSchema.parse(legacy);
     expect(migrated.player.autoEnableSubtitles).toBe(true);
     expect(migrated.player.preferredSubtitleLanguage).toBe('eng');
+    expect(migrated.player.preferredDisplayId).toBe('auto');
+    expect(migrated.home.sectionOrder).toContain('resume');
+    expect(migrated.home.hiddenSections).toEqual([]);
   });
 });

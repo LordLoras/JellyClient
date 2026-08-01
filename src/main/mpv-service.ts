@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createConnection, type Socket } from 'node:net';
-import { app } from 'electron';
+import { app, screen } from 'electron';
 import type {
   AppSettings,
   MediaItem,
@@ -696,6 +696,14 @@ export class MpvService extends EventEmitter {
       );
     } else {
       args.push('--target-colorspace-hint=auto');
+    }
+    if (settings.player.preferredDisplayId !== 'auto') {
+      const displayIndex = screen.getAllDisplays().findIndex(
+        (display) => String(display.id) === settings.player.preferredDisplayId
+      );
+      if (displayIndex >= 0) {
+        args.push(`--screen=${displayIndex}`, `--fs-screen=${displayIndex}`);
+      }
     }
     return args;
   }

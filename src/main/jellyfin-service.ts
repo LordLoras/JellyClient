@@ -3,8 +3,12 @@ import axios from 'axios';
 import { Jellyfin } from '@jellyfin/sdk/lib/jellyfin.js';
 import type { Api } from '@jellyfin/sdk/lib/api.js';
 import { getItemsApi } from '@jellyfin/sdk/lib/utils/api/items-api.js';
+import { getCollectionApi } from '@jellyfin/sdk/lib/utils/api/collection-api.js';
+import { getLibraryApi } from '@jellyfin/sdk/lib/utils/api/library-api.js';
 import { getMediaInfoApi } from '@jellyfin/sdk/lib/utils/api/media-info-api.js';
+import { getMoviesApi } from '@jellyfin/sdk/lib/utils/api/movies-api.js';
 import { getPlaystateApi } from '@jellyfin/sdk/lib/utils/api/playstate-api.js';
+import { getPlaylistsApi } from '@jellyfin/sdk/lib/utils/api/playlists-api.js';
 import { getQuickConnectApi } from '@jellyfin/sdk/lib/utils/api/quick-connect-api.js';
 import { getSystemApi } from '@jellyfin/sdk/lib/utils/api/system-api.js';
 import { getTvShowsApi } from '@jellyfin/sdk/lib/utils/api/tv-shows-api.js';
@@ -21,11 +25,14 @@ import { ItemSortBy } from '@jellyfin/sdk/lib/generated-client/models/item-sort-
 import type { MediaSourceInfo } from '@jellyfin/sdk/lib/generated-client/models/media-source-info.js';
 import type { MediaStream } from '@jellyfin/sdk/lib/generated-client/models/media-stream.js';
 import { MediaStreamType } from '@jellyfin/sdk/lib/generated-client/models/media-stream-type.js';
+import { MediaType } from '@jellyfin/sdk/lib/generated-client/models/media-type.js';
 import { SortOrder } from '@jellyfin/sdk/lib/generated-client/models/sort-order.js';
 import type { PublicSystemInfo } from '@jellyfin/sdk/lib/generated-client/models/public-system-info.js';
 import type { TrickplayInfoDto } from '@jellyfin/sdk/lib/generated-client/models/trickplay-info-dto.js';
 import type {
   CatalogQuery,
+  CatalogContainer,
+  CatalogContainerKind,
   ConnectionInput,
   ConnectionState,
   DiscoveredServer,
@@ -472,7 +479,10 @@ export class JellyfinService extends EventEmitter {
       viewsResponse,
       resumeResponse,
       nextUpResponse,
-      latestResponse
+      latestResponse,
+      favoritesResponse,
+      recentlyPlayedResponse,
+      recommendationsResponse
     ] = await Promise.all([
       getUserViewsApi(this.api).getUserViews({
         userId: this.userId
@@ -515,8 +525,53 @@ export class JellyfinService extends EventEmitter {
         enableUserData: true,
         limit: 30,
         groupItems: true
-      })
+      }),
+      getItemsApi(this.api).getItems({
+        userId: this.userId,
+        recursive: true,
+        limit: 24,
+        includeItemTypes: [
+          BaseItemKind.Movie,
+          BaseItemKind.Series,
+          BaseItemKind.Episode,
+          BaseItemKind.Video
+        ],
+        fields: ITEM_FIELDS,
+        filters: [ItemFilter.IsFavorite],
+        sortBy: [ItemSortBy.SortName],
+        sortOrder: [SortOrder.Ascending],
+        enableImages: true,
+        enableUserData: true,
+        enableTotalRecordCount: false
+      }).catch(() => ({ data: { Items: [] } })),
+      getItemsApi(this.api).getItems({
+        userId: this.userId,
+        recursive: true,
+        limit: 24,
+        includeItemTypes: [
+          BaseItemKind.Movie,
+          BaseItemKind.Episode,
+          BaseItemKind.Video
+        ],
+        fields: ITEM_FIELDS,
+        filters: [ItemFilter.IsPlayed],
+        sortBy: [ItemSortBy.DatePlayed],
+        sortOrder: [SortOrder.Descending],
+        enableImages: true,
+        enableUserData: true,
+        enableTotalRecordCount: false
+      }).catch(() => ({ data: { Items: [] } })),
+      getMoviesApi(this.api).getMovieRecommendations({
+        userId: this.userId,
+        fields: ITEM_FIELDS,
+        categoryLimit: 4,
+        itemLimit: 8
+      }).catch(() => ({ data: [] }))
     ]);
+
+    const recommendations = recommendationsResponse.data.flatMap(
+      (category: { Items?: BaseItemDto[] | null }) => category.Items ?? []
+    );
 
     return {
       libraries: (viewsResponse.data.Items ?? []).map((item: BaseItemDto) =>
@@ -528,6 +583,15 @@ export class JellyfinService extends EventEmitter {
       nextUp: (nextUpResponse.data.Items ?? []).map((item: BaseItemDto) =>
         this.mapItem(item)
       ),
+      favorites: (favoritesResponse.data.Items ?? []).map((item: BaseItemDto) =>
+        this.mapItem(item)
+      ),
+      recentlyPlayed: (recentlyPlayedResponse.data.Items ?? []).map((item: BaseItemDto) =>
+        this.mapItem(item)
+      ),
+      recommended: this.uniqueItems(recommendations).map((item: BaseItemDto) =>
+        this.mapItem(item)
+      ),
       latest: latestResponse.data.map((item: BaseItemDto) => this.mapItem(item))
     };
   }
@@ -536,6 +600,27 @@ export class JellyfinService extends EventEmitter {
     await getPlaystateApi(this.api).markUnplayedItem({
       itemId,
       userId: this.userId
+    });
+    return this.getHome();
+  }
+
+  async restorePlaybackProgress(
+    itemId: string,
+    positionTicks: number
+  ): Promise<HomePayload> {
+    const items = getItemsApi(this.api);
+    const current = await items.getItemUserData({
+      itemId,
+      userId: this.userId
+    });
+    await items.updateItemUserData({
+      itemId,
+      userId: this.userId,
+      updateUserItemDataDto: {
+        ...current.data,
+        PlaybackPositionTicks: positionTicks,
+        Played: false
+      }
     });
     return this.getHome();
   }
@@ -568,7 +653,13 @@ export class JellyfinService extends EventEmitter {
         : SortOrder.Ascending],
       enableImages: true,
       enableUserData: true,
-      enableTotalRecordCount: true
+      enableTotalRecordCount: true,
+      genres: query.genres,
+      years: query.years,
+      personIds: query.personIds,
+      minCommunityRating: query.minCommunityRating,
+      is4K: query.is4K,
+      hasSubtitles: query.hasSubtitles
     });
     const returnedItems = response.data.Items ?? [];
     const visibleItems = returnedItems.filter(isVisibleCatalogItem);
@@ -585,7 +676,14 @@ export class JellyfinService extends EventEmitter {
   }
 
   async getItem(itemId: string): Promise<ItemDetails> {
-    const [response, expandedResponse, specialFeatures, localTrailers] =
+    const [
+      response,
+      expandedResponse,
+      specialFeatures,
+      localTrailers,
+      childrenResponse,
+      similarResponse
+    ] =
       await Promise.all([
         getUserLibraryApi(this.api).getItem({
           itemId,
@@ -605,9 +703,40 @@ export class JellyfinService extends EventEmitter {
         getUserLibraryApi(this.api).getLocalTrailers({
           itemId,
           userId: this.userId
-        }).then((value: { data: BaseItemDto[] }) => value.data).catch(() => [])
+        }).then((value: { data: BaseItemDto[] }) => value.data).catch(() => []),
+        getItemsApi(this.api).getItems({
+          userId: this.userId,
+          parentId: itemId,
+          fields: ITEM_FIELDS,
+          sortBy: [ItemSortBy.SortName],
+          sortOrder: [SortOrder.Ascending],
+          enableImages: true,
+          enableUserData: true,
+          enableTotalRecordCount: false
+        }).then((value: { data: { Items?: BaseItemDto[] | null } }) =>
+          value.data.Items ?? []
+        ).catch(() => []),
+        getLibraryApi(this.api).getSimilarItems({
+          itemId,
+          userId: this.userId,
+          limit: 18,
+          fields: ITEM_FIELDS
+        }).then((value: { data: { Items?: BaseItemDto[] | null } }) =>
+          value.data.Items ?? []
+        ).catch(() => [])
       ]);
     const item = expandedResponse.data.Items?.[0] ?? response.data;
+    const children = item.Type === BaseItemKind.Playlist
+      ? await getPlaylistsApi(this.api).getPlaylistItems({
+          playlistId: itemId,
+          userId: this.userId,
+          fields: ITEM_FIELDS,
+          enableImages: true,
+          enableUserData: true
+        }).then((value: { data: { Items?: BaseItemDto[] | null } }) =>
+          value.data.Items ?? []
+        ).catch(() => childrenResponse)
+      : childrenResponse;
     const canPlay = this.canPlayItem(item);
     const playbackSources = canPlay
       ? await getMediaInfoApi(this.api).getPlaybackInfo({
@@ -658,8 +787,120 @@ export class JellyfinService extends EventEmitter {
       ),
       localTrailers: localTrailers.map((trailer: BaseItemDto) =>
         this.mapItem(trailer)
-      )
+      ),
+      children: children
+        .filter(isVisibleCatalogItem)
+        .map((child: BaseItemDto) => this.mapItem(child)),
+      similarItems: similarResponse
+        .filter((similar: BaseItemDto) => similar.Id !== itemId)
+        .filter(isVisibleCatalogItem)
+        .map((similar: BaseItemDto) => this.mapItem(similar))
     };
+  }
+
+  async listContainers(kind: CatalogContainerKind): Promise<CatalogContainer[]> {
+    const response = await getItemsApi(this.api).getItems({
+      userId: this.userId,
+      recursive: true,
+      includeItemTypes: [
+        kind === 'playlist' ? BaseItemKind.Playlist : BaseItemKind.BoxSet
+      ],
+      fields: ITEM_FIELDS,
+      sortBy: [ItemSortBy.SortName],
+      sortOrder: [SortOrder.Ascending],
+      enableImages: true,
+      enableUserData: true,
+      enableTotalRecordCount: false
+    });
+    return (response.data.Items ?? []).map((item: BaseItemDto) =>
+      this.mapContainer(item, kind)
+    );
+  }
+
+  async createContainer(
+    kind: CatalogContainerKind,
+    name: string,
+    itemId: string
+  ): Promise<CatalogContainer[]> {
+    if (kind === 'playlist') {
+      await getPlaylistsApi(this.api).createPlaylist({
+        name,
+        ids: [itemId],
+        userId: this.userId,
+        mediaType: MediaType.Video
+      });
+    } else {
+      await getCollectionApi(this.api).createCollection({
+        name,
+        ids: [itemId]
+      });
+    }
+    this.events.emitClient({
+      type: 'catalog-changed',
+      data: { reason: 'library' }
+    });
+    return this.listContainers(kind);
+  }
+
+  async addToContainer(
+    kind: CatalogContainerKind,
+    containerId: string,
+    itemId: string
+  ): Promise<void> {
+    if (kind === 'playlist') {
+      await getPlaylistsApi(this.api).addItemToPlaylist({
+        playlistId: containerId,
+        ids: [itemId],
+        userId: this.userId
+      });
+    } else {
+      await getCollectionApi(this.api).addToCollection({
+        collectionId: containerId,
+        ids: [itemId]
+      });
+    }
+    this.events.emitClient({
+      type: 'catalog-changed',
+      data: { reason: 'library' }
+    });
+  }
+
+  async removeFromContainer(
+    kind: CatalogContainerKind,
+    containerId: string,
+    entryId: string
+  ): Promise<void> {
+    if (kind === 'playlist') {
+      await getPlaylistsApi(this.api).removeItemFromPlaylist({
+        playlistId: containerId,
+        entryIds: [entryId]
+      });
+    } else {
+      await getCollectionApi(this.api).removeFromCollection({
+        collectionId: containerId,
+        ids: [entryId]
+      });
+    }
+    this.events.emitClient({
+      type: 'catalog-changed',
+      data: { reason: 'library' }
+    });
+  }
+
+  async movePlaylistItem(
+    playlistId: string,
+    entryId: string,
+    newIndex: number
+  ): Promise<void> {
+    await getPlaylistsApi(this.api).moveItem({
+      playlistId,
+      itemId: entryId,
+      newIndex
+    });
+    this.events.emitClient({
+      type: 'catalog-changed',
+      data: { reason: 'library' }
+    });
   }
 
   async getNextEpisode(
@@ -840,6 +1081,9 @@ export class JellyfinService extends EventEmitter {
       playedPercentage: item.UserData?.PlayedPercentage ?? 0,
       isPlayed: item.UserData?.Played ?? false,
       isFavorite: item.UserData?.IsFavorite ?? false,
+      lastPlayedDate: item.UserData?.LastPlayedDate ?? null,
+      unplayedItemCount: item.UserData?.UnplayedItemCount ?? null,
+      playlistItemId: item.PlaylistItemId ?? null,
       isFolder: item.IsFolder ?? false,
       canPlay: this.canPlayItem(item),
       mediaFormat: mediaFormatForItem(item),
@@ -856,6 +1100,31 @@ export class JellyfinService extends EventEmitter {
       item.Type === BaseItemKind.Video;
   }
 
+  private mapContainer(
+    item: BaseItemDto,
+    kind: CatalogContainerKind
+  ): CatalogContainer {
+    const id = item.Id ?? '';
+    const tag = item.ImageTags?.Primary;
+    return {
+      id,
+      name: item.Name ?? (kind === 'playlist' ? 'Untitled playlist' : 'Untitled collection'),
+      kind,
+      itemCount: item.ChildCount ?? item.RecursiveItemCount ?? 0,
+      imageUrl: id && tag ? this.imageUrl(id, 'Primary', tag) : null
+    };
+  }
+
+  private uniqueItems(items: BaseItemDto[]): BaseItemDto[] {
+    const seen = new Set<string>();
+    return items.filter((item) => {
+      const id = item.Id;
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+  }
+
   private catalogSort(value?: CatalogQuery['sortBy']): ItemSortBy {
     const mapping: Record<NonNullable<CatalogQuery['sortBy']>, ItemSortBy> = {
       SortName: ItemSortBy.SortName,
@@ -863,7 +1132,8 @@ export class JellyfinService extends EventEmitter {
       PremiereDate: ItemSortBy.PremiereDate,
       ProductionYear: ItemSortBy.ProductionYear,
       CommunityRating: ItemSortBy.CommunityRating,
-      Runtime: ItemSortBy.Runtime
+      Runtime: ItemSortBy.Runtime,
+      DatePlayed: ItemSortBy.DatePlayed
     };
     return value ? mapping[value] : ItemSortBy.SortName;
   }

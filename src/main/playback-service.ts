@@ -81,6 +81,7 @@ export class PlaybackService extends EventEmitter {
   private active: ActivePlayback | null = null;
   private reportTimer: NodeJS.Timeout | null = null;
   private reportChain: Promise<void> = Promise.resolve();
+  private lastInput: PlayMediaInput | null = null;
 
   constructor(
     jellyfin: JellyfinService,
@@ -147,6 +148,7 @@ export class PlaybackService extends EventEmitter {
       playlistItemId?: string | null;
     } = {}
   ): Promise<PlaybackState> {
+    this.lastInput = structuredClone(input);
     if (this.active && !this.active.stopped) {
       await this.reportStopped(false);
     }
@@ -316,6 +318,20 @@ export class PlaybackService extends EventEmitter {
       throw error;
     }
     return this.state;
+  }
+
+  async retry(): Promise<PlaybackState> {
+    if (!this.lastInput) {
+      throw new Error('There is no recent playback request to retry.');
+    }
+    const resumeSeconds = Math.max(
+      this.mpv.state.positionSeconds,
+      this.lastInput.startPositionTicks / TICKS_PER_SECOND
+    );
+    return this.play({
+      ...this.lastInput,
+      startPositionTicks: Math.round(resumeSeconds * TICKS_PER_SECOND)
+    });
   }
 
   async playLocal(): Promise<PlaybackState> {
