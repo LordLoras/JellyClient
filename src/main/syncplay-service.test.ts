@@ -61,7 +61,8 @@ function subject() {
   const socket = new EventEmitter() as EventEmitter & {
     waitUntilConnected(): Promise<void>;
   };
-  socket.waitUntilConnected = vi.fn(async () => undefined);
+  const waitUntilConnected = vi.fn(async () => undefined);
+  socket.waitUntilConnected = waitUntilConnected;
   const mpv = new FakeMpv();
   const playback = {
     play: vi.fn(async () => mpv.state),
@@ -107,7 +108,15 @@ function subject() {
     playlistItemId: 'playlist-1'
   };
   internal.lastBuffering = false;
-  return { events, internal, mpv, playback, service };
+  return {
+    events,
+    internal,
+    mpv,
+    playback,
+    service,
+    socket,
+    waitUntilConnected
+  };
 }
 
 describe('SyncPlay native MPV controls', () => {
@@ -118,6 +127,41 @@ describe('SyncPlay native MPV controls', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('waits for the live session before listing SyncPlay rooms', async () => {
+    const { service, waitUntilConnected } = subject();
+
+    const state = await service.listGroups();
+
+    expect(waitUntilConnected).toHaveBeenCalledOnce();
+    expect(waitUntilConnected.mock.invocationCallOrder[0]).toBeLessThan(
+      syncApi.syncPlayGetGroups.mock.invocationCallOrder[0] ?? Infinity
+    );
+    expect(state.groups).toEqual([{
+      id: 'group-1',
+      name: 'Movie night',
+      state: 'Playing',
+      participants: ['One', 'Two']
+    }]);
+  });
+
+  it('keeps the panel usable when Jellyfin cannot list SyncPlay rooms', async () => {
+    const { service } = subject();
+    syncApi.syncPlayGetGroups.mockRejectedValueOnce({
+      isAxiosError: true,
+      message: 'Request failed with status code 500',
+      response: {
+        status: 500,
+        data: 'Error processing request.'
+      }
+    });
+
+    const state = await service.listGroups();
+
+    expect(state.groups).toHaveLength(0);
+    expect(state.currentGroup?.id).toBe('group-1');
+    expect(state.error).toContain('Jellyfin could not list SyncPlay rooms.');
   });
 
   it('relays a seek performed in the MPV window to Jellyfin', async () => {

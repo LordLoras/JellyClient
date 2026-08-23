@@ -1,5 +1,6 @@
 import { getSyncPlayApi } from '@jellyfin/sdk/lib/utils/api/sync-play-api.js';
 import { getTimeSyncApi } from '@jellyfin/sdk/lib/utils/api/time-sync-api.js';
+import axios from 'axios';
 import type { GroupInfoDto } from '@jellyfin/sdk/lib/generated-client/models/group-info-dto.js';
 import type { PlayQueueUpdate } from '@jellyfin/sdk/lib/generated-client/models/play-queue-update.js';
 import type { SendCommand } from '@jellyfin/sdk/lib/generated-client/models/send-command.js';
@@ -147,21 +148,39 @@ export class SyncPlayService {
   }
 
   async listGroups(): Promise<SyncPlayState> {
-    const response = await getSyncPlayApi(this.jellyfin.api).syncPlayGetGroups();
-    const groups = response.data.map((group: GroupInfoDto) =>
-      this.mapGroup(group)
-    );
-    const current = this.stateValue.currentGroup
-      ? groups.find((group: SyncPlayGroup) =>
-          group.id === this.stateValue.currentGroup?.id
-        ) ??
-        this.stateValue.currentGroup
-      : null;
-    this.setState({
-      ...this.stateValue,
-      groups,
-      currentGroup: current
-    });
+    try {
+      // Jellyfin associates SyncPlay operations with the live device session.
+      // Listing during WebSocket startup can race that session registration and
+      // leave the server without a usable SyncPlay controller.
+      await this.socket.waitUntilConnected();
+      const response = await getSyncPlayApi(
+        this.jellyfin.api
+      ).syncPlayGetGroups();
+      const groups = response.data.map((group: GroupInfoDto) =>
+        this.mapGroup(group)
+      );
+      const current = this.stateValue.currentGroup
+        ? groups.find((group: SyncPlayGroup) =>
+            group.id === this.stateValue.currentGroup?.id
+          ) ??
+          this.stateValue.currentGroup
+        : null;
+      this.setState({
+        ...this.stateValue,
+        groups,
+        currentGroup: current,
+        error: null
+      });
+    } catch (error) {
+      const message =
+        axios.isAxiosError(error) && (error.response?.status ?? 0) >= 500
+          ? 'Jellyfin could not list SyncPlay rooms. Retry shortly. If this continues, leave any stale room from another client or restart the Jellyfin server.'
+          : userFacingError(error, 'Could not list SyncPlay rooms.');
+      this.setState({
+        ...this.stateValue,
+        error: message
+      });
+    }
     return this.state;
   }
 

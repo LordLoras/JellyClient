@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.2 — 2026-08-23
+
+- Wait for Jellyfin's live device session before listing SyncPlay rooms, avoiding
+  a startup race that could leave the server without a usable SyncPlay
+  controller.
+- Keep the SyncPlay panel usable when Jellyfin returns an internal server error.
+  The app now preserves room state and shows recovery guidance instead of
+  exposing Electron IPC and Axios internals.
+- Report the current JellyClient version to Jellyfin and expand automated
+  coverage to 120 unit tests and 16 packaged-app workflows.
+
 ## 1.4.1 — 2026-08-01
 
 - Replace hidden checkbox-based settings toggles with explicit switch controls
