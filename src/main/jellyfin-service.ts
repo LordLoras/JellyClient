@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import axios from 'axios';
+import { createJellyfinHttpClient, jellyfinFetch } from './jellyfin-http.js';
 import { Jellyfin } from '@jellyfin/sdk/lib/jellyfin.js';
 import type { Api } from '@jellyfin/sdk/lib/api.js';
 import { getItemsApi } from '@jellyfin/sdk/lib/utils/api/items-api.js';
@@ -992,7 +992,7 @@ export class JellyfinService extends EventEmitter {
     if (!this.apiValue) return new Response(null, { status: 401 });
     const upstream = `${this.apiValue.basePath}${path}`;
     try {
-      return await fetch(upstream, {
+      return await jellyfinFetch(upstream, {
         headers: {
           Authorization: this.apiValue.authorizationHeader
         }
@@ -1038,7 +1038,7 @@ export class JellyfinService extends EventEmitter {
     this.apiValue = jellyfin.createApi(
       baseUrl,
       accessToken,
-      axios.create({ timeout: API_TIMEOUT_MS })
+      createJellyfinHttpClient(API_TIMEOUT_MS)
     );
   }
 
